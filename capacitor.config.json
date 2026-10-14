@@ -1,0 +1,9 @@
+{
+  "appId": "io.github.capuchowp.pianotab",
+  "appName": "Note Bounce",
+  "webDir": "www",
+  "backgroundColor": "#0a0a0f",
+  "server": {
+    "androidScheme": "https"
+  }
+}
