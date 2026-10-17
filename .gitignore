@@ -5,3 +5,7 @@ android/
 *.jks
 *.b64
 keystore*
+
+# nunca suba listas de códigos Pro
+codigos*.txt
+codigos*.csv
