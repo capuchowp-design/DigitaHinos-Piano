@@ -313,6 +313,10 @@
 
         /* PRO / HINOS */
         .voice-chip.locked { opacity:.7; }
+        .voice-chip.arr.on { --vc:#ffa500; }
+        .arr-sep { width:1px; align-self:stretch; background:var(--border-main); margin:0 4px; }
+        .chord-badge { display:inline-flex; align-items:center; padding:4px 12px; border-radius:14px; background:#ffa50022; border:1px solid #ffa500; color:#ffb940; font-size:15px; font-weight:800; min-width:54px; justify-content:center; letter-spacing:.5px; }
+        .chord-badge[hidden] { display:none; }
         .voice-chip.preview-badge { margin-left:6px; border-color:#ffa500; color:#ffb940; }
         .voice-chip.preview-badge[hidden] { display:none; }
         .pro-feats { margin:0 0 12px; padding:0; list-style:none; display:flex; flex-direction:column; gap:7px; font-size:13px; }
@@ -516,6 +520,8 @@
         <div class="piano-container"><canvas id="pianoCanvas"></canvas></div>
     </div>
     <div class="voice-bar" id="voiceBar" hidden>
+        <div id="arrChips" style="display:contents"></div>
+        <span class="chord-badge" id="chordBadge" hidden></span>
         <span class="vb-label">Vozes:</span>
         <div id="voiceChips" style="display:contents"></div>
         <button type="button" class="voice-chip preview-badge" id="previewBadge" hidden>🔒 Prévia grátis · liberar hino completo</button>
@@ -1077,7 +1083,7 @@ async function parseMusicXmlFile(buf){
     Array.from(doc.getElementsByTagName('score-part')).forEach(sp=>{
         partNames[sp.getAttribute('id')]=mxlTxt(mxlKid(sp,'part-name'))||mxlTxt(mxlKid(sp,'part-abbreviation'));
     });
-    const parts=mxlKids(rootEl,'part'), raw=[], tempos=[];
+    const parts=mxlKids(rootEl,'part'), raw=[], tempos=[], bars=[];
     const STEP={C:0,D:2,E:4,F:5,G:7,A:9,B:11};
 
     parts.forEach((part,pi)=>{
@@ -1116,6 +1122,7 @@ async function parseMusicXmlFile(buf){
                     if(ties.includes('start')) pend.set(key,nt); else pend.delete(key);
                 }
             }
+            if(pi===0) bars.push({q:t,len:maxPos/D});
             t+=maxPos/D;
         }
     });
@@ -1199,7 +1206,11 @@ async function parseMusicXmlFile(buf){
         });
     });
     notes.sort((a,b)=>a.startTime-b.startTime);
-    return {notes,duration:Math.max(...notes.map(n=>n.endTime)),bpm:segs[0].bpm,names:nmap,voiceCount:lines.length};
+    // grade de batidas e de compassos (em segundos) — usada para calcular os acordes
+    const beatSecs=[], barSecs=[];
+    bars.filter(b=>b.len>1e-6).forEach(b=>{ barSecs.push(secOf(b.q)); for(let k=0;k<Math.ceil(b.len-1e-6);k++) beatSecs.push(secOf(b.q+k)); });
+    if(bars.length){ const lb=bars[bars.length-1]; beatSecs.push(secOf(lb.q+lb.len)); }
+    return {notes,duration:Math.max(...notes.map(n=>n.endTime)),bpm:segs[0].bpm,names:nmap,voiceCount:lines.length,beats:beatSecs,bars:barSecs};
 }
 
 // Abre qualquer formato suportado (MIDI, MusicXML, MXL) pelo conteúdo do arquivo.
@@ -1421,7 +1432,7 @@ function loadMidiFile(file){
             const parsed=await parseScoreFile(e.target.result);
             if(!parsed.notes.length) throw new Error('Nenhuma nota encontrada');
             state.source='file'; state.preview=false; state.currentHymn=null;
-            await applyNotes(parsed.notes, parsed.duration, parsed.names);
+            await applyNotes(parsed.notes, parsed.duration, parsed.names, parsed);
             toast(`Carregado! ${state.totalNotes} notas`+(state.voiceList.length>1?` · ${state.voiceList.length} vozes`:''), 'success');
         } catch(err){ toast('Erro: '+err.message); state.midiLoaded=false; }
         loadingOverlay.classList.remove('active');
@@ -1430,8 +1441,9 @@ function loadMidiFile(file){
     reader.readAsArrayBuffer(file);
 }
 
-async function applyNotes(notes, duration, names){
+async function applyNotes(notes, duration, names, meta){
     notes.forEach(n=>{ if(!n.color) n.color=gc(n.track||0); });
+    state.arr='four'; state.chordNotes=null; state.chordSegs=null; state.beats=(meta&&meta.beats)||null; state.bars=(meta&&meta.bars)||null;
     state.allNotes=notes; state.notes=notes; state.duration=duration; state.midiLoaded=true;
     buildVoiceBar(notes, names);
     applyHandVoicing();
@@ -1458,7 +1470,15 @@ function buildVoiceBar(notes, names){
     });
     state.voiceSel=new Set(tracks);
     box.innerHTML='';
+    const ac=document.getElementById('arrChips'); ac.innerHTML='';
     if(tracks.length<2){ bar.hidden=true; return; }
+    if(satbIdx()&&state.beats&&state.beats.length>2){
+        const mkA=(k,label,title)=>{ const b=document.createElement('button'); b.type='button'; b.className='voice-chip arr'; b.dataset.arr=k; b.title=title;
+            b.appendChild(document.createTextNode(label)); b.addEventListener('click',()=>setArrangement(k)); ac.appendChild(b); };
+        mkA('four','🎹 4 vozes (órgão)','Soprano, contralto, tenor e baixo, com som de órgão');
+        mkA('chords','🎶 Melodia + acordes (piano)','Mão direita: soprano · Mão esquerda: acordes calculados da partitura');
+        const sep=document.createElement('span'); sep.className='arr-sep'; ac.appendChild(sep);
+    }
     const mk=(label,color,cls,fn,title)=>{
         const b=document.createElement('button'); b.type='button'; b.className='voice-chip '+cls; b.title=title||'';
         const d=document.createElement('span'); d.className='dot'; b.appendChild(d); b.appendChild(document.createTextNode(label));
@@ -1495,6 +1515,161 @@ function applyHandVoicing(){
     fix(idx.T,idx.B,-1);   // tenor desce
     fix(idx.A,idx.S,+1);   // contralto sobe
 }
+
+// ======================== ACOMPANHAMENTO POR ACORDES ========================
+// Modo "melodia + acordes": mão direita = só o soprano; mão esquerda = acordes calculados a partir das 4 vozes.
+// Os acordes são identificados por batida (peso maior para o baixo e o soprano) e a mão esquerda toca a nota
+// fundamental grave + terça/quinta logo acima (tudo dentro de uma oitava), tocados de novo a cada início de compasso,
+// tempo forte e frase — o acorde não fica preso até a troca.
+function satbIdx(){
+    const idx={}; state.voiceList.forEach(v=>{ const k={soprano:'S',contralto:'A',alto:'A',tenor:'T',baixo:'B'}[String(v.name).toLowerCase()]; if(k) idx[k]=v.track; });
+    return ('S' in idx&&'A' in idx&&'T' in idx&&'B' in idx)?idx:null;
+}
+const PC_NAMES=['C','Db','D','Eb','E','F','F#','G','Ab','A','Bb','B'];
+const CH_TPL=[
+    {suf:'',   iv:[0,4,7],    pri:0.05, third:4},
+    {suf:'m',  iv:[0,3,7],    pri:0.05, third:3},
+    {suf:'7',  iv:[0,4,7,10], pri:-0.12,third:4, sev:10},
+    {suf:'7M', iv:[0,4,7,11], pri:-0.3,third:4, sev:11},
+    {suf:'m7', iv:[0,3,7,10], pri:-0.14,third:3, sev:10},
+    {suf:'°',  iv:[0,3,6],    pri:-0.15,third:3},
+    {suf:'m7(b5)',iv:[0,3,6,10],pri:-0.2,third:3, sev:10},
+    {suf:'+',  iv:[0,4,8],    pri:-0.2, third:4}
+];
+function chordScore(w,W,bassPc,r,T){
+    let inn=0; T.iv.forEach(i=>{ inn+=w[(r+i)%12]; });
+    let sc=inn-0.8*(W-inn)+T.pri*W;
+    sc+= bassPc===r ? 0.25*W : (T.iv.includes(((bassPc-r)%12+12)%12)?0.08*W:0);
+    sc+= w[r]>0 ? 0.1*W : -0.2*W;
+    if(!(w[(r+T.third)%12]>0)) sc-=0.25*W;
+    if(!(w[(r+T.iv[2])%12]>0)) sc-=0.05*W;
+    return sc;
+}
+function analyzeChords(){
+    const idx=satbIdx(), beats=state.beats; if(!idx||!beats||beats.length<2) return null;
+    const vw={}; vw[idx.B]=2.0; vw[idx.S]=1.3; vw[idx.A]=1.0; vw[idx.T]=1.0;
+    const notes=state.allNotes.filter(n=>n.track in vw).sort((a,b)=>a.startTime-b.startTime);
+    const wins=[]; let prev=null, lo=0;
+    for(let i=0;i<beats.length-1;i++){
+        const a=beats[i], b=beats[i+1]; if(b-a<1e-4) continue;
+        while(lo<notes.length&&notes[lo].endTime<=a-1e-3) lo++;
+        const w=new Array(12).fill(0), bw=new Array(12).fill(0); let W=0;
+        for(let k=lo;k<notes.length&&notes[k].startTime<b-1e-3;k++){
+            const n=notes[k], ov=Math.min(n.endTime,b)-Math.max(n.startTime,a); if(ov<=1e-3) continue;
+            const pc=((n.midi0!==undefined?n.midi0:n.midi)%12+12)%12, x=ov*vw[n.track]; w[pc]+=x; W+=x;
+            if(n.track===idx.B) bw[pc]+=ov;
+        }
+        if(W<=0){ wins.push({a,b,ch:null}); prev=null; continue; }
+        let bassPc=-1,bm=0; bw.forEach((v,pc)=>{ if(v>bm){bm=v;bassPc=pc;} });
+        let best=null;
+        for(let r=0;r<12;r++) for(const T of CH_TPL){ const sc=chordScore(w,W,bassPc,r,T); if(!best||sc>best.sc) best={r,T,sc}; }
+        if(prev){ const ps=chordScore(w,W,bassPc,prev.r,prev.T); if(ps>=best.sc-0.12*W) best={r:prev.r,T:prev.T,sc:ps}; }
+        prev=best; wins.push({a,b,ch:best});
+    }
+    // Pontos em que o acorde é tocado de novo (nunca fica preso até o acorde mudar):
+    //  • todo início de compasso; • compassos de 4 tempos ou mais: a cada 2 tempos (tempo forte);
+    //  • início de frase da melodia: soprano que volta depois de uma pausa.
+    const bars=(state.bars||[]).slice(), strike=new Set(), r3=t=>Math.round(t*1000);
+    bars.forEach((b,bi)=>{
+        const e=bi+1<bars.length?bars[bi+1]:Infinity;
+        const bt=beats.filter(x=>x>=b-1e-3&&x<e-1e-3), step=bt.length>=4?2:bt.length+1;
+        for(let k=0;k<bt.length;k+=step) strike.add(r3(bt[k]));
+        strike.add(r3(b));
+    });
+    const sop=state.allNotes.filter(n=>n.track===idx.S).sort((a,b)=>a.startTime-b.startTime), phr=[];
+    const beatLen=t=>{ let k=0; while(k<beats.length-2&&beats[k+1]<=t+1e-3) k++; return Math.max(0.2,beats[k+1]-beats[k]); };
+    for(let k=1;k<sop.length;k++){
+        const gap=sop[k].startTime-Math.max(...sop.slice(Math.max(0,k-4),k).map(x=>x.endTime));
+        if(gap>=0.4*beatLen(sop[k].startTime)) phr.push(sop[k].startTime);
+    }
+    let segs=[];
+    wins.forEach(wd=>{
+        if(!wd.ch){ return; }
+        const L=segs[segs.length-1], same=L&&Math.abs(L.b-wd.a)<1e-3&&L.r===wd.ch.r&&L.T===wd.ch.T;
+        if(same&&!strike.has(r3(wd.a))) L.b=wd.b;
+        else segs.push({a:wd.a,b:wd.b,r:wd.ch.r,T:wd.ch.T});
+    });
+    // divide os acordes longos nos inícios de frase
+    for(let k=0;k<segs.length;k++){
+        const g=segs[k], bl=beatLen(g.a);
+        const t=phr.find(x=>x>g.a+0.3*bl&&x<g.b-0.3*bl);
+        if(t!==undefined){ segs.splice(k+1,0,{a:t,b:g.b,r:g.r,T:g.T}); g.b=t; }
+    }
+    // "Respostas do baixo": o soprano sustenta (ou pausa), as outras vozes não se movem e o baixo toca sozinho
+    // duas ou mais notas seguidas. Nesse trecho o acorde para, o baixo toca a passagem (cada nota dobrada na
+    // oitava de cima, cabe na mão esquerda) e o acorde volta assim que a passagem termina.
+    const others=state.allNotes.filter(n=>n.track===idx.S||n.track===idx.A||n.track===idx.T).map(n=>n.startTime).sort((a,b)=>a-b);
+    const hasOnset=(x,y)=>others.some(t=>t>=x&&t<=y);
+    const bass=state.allNotes.filter(n=>n.track===idx.B).sort((a,b)=>a.startTime-b.startTime), passages=[]; let run=[];
+    const flush=()=>{ if(run.length>=2) passages.push({a:run[0].startTime,b:run[run.length-1].endTime,notes:run.slice()}); run=[]; };
+    bass.forEach(n=>{
+        const solo=!hasOnset(n.startTime-0.03,n.endTime-0.05);
+        if(!solo){ flush(); return; }
+        if(run.length&&n.startTime-run[run.length-1].endTime>0.5*beatLen(n.startTime)) flush();
+        run.push(n);
+    });
+    flush();
+    if(passages.length){
+        const res=[];
+        segs.forEach(g=>{
+            let pieces=[{a:g.a,b:g.b}];
+            passages.forEach(ps=>{
+                const nx=[];
+                pieces.forEach(pc=>{
+                    if(ps.b<=pc.a||ps.a>=pc.b){ nx.push(pc); return; }
+                    if(ps.a>pc.a+0.05) nx.push({a:pc.a,b:ps.a});
+                    if(ps.b<pc.b-0.1) nx.push({a:ps.b,b:pc.b});
+                });
+                pieces=nx;
+            });
+            pieces.forEach(pc=>res.push({a:pc.a,b:pc.b,r:g.r,T:g.T}));
+        });
+        passages.forEach(ps=>res.push({a:ps.a,b:ps.b,solo:true,notes:ps.notes,name:'♪ baixo'}));
+        res.sort((x,y)=>x.a-y.a); segs=res;
+    }
+    segs.forEach(g=>{ if(!g.solo) g.name=PC_NAMES[g.r]+g.T.suf; });
+    return segs;
+}
+function buildChordNotes(segs){
+    // Mão esquerda cabe numa oitava: nota grave (fundamental) + terça, quinta (e sétima) logo acima,
+    // tudo dentro de Dó→Dó. A oitava da fundamental é a mais próxima do acorde anterior.
+    const out=[]; let prevRoot=null;
+    segs.forEach(g=>{
+        if(g.solo){
+            g.notes.forEach(n=>{ const m=(n.midi0!==undefined?n.midi0:n.midi), e=Math.max(n.startTime+0.05,n.endTime-0.03), d=e-n.startTime;
+                out.push({midi:m,startTime:n.startTime,endTime:e,duration:d,velocity:0.75,track:99,color:'#ff7043',chord:g.name});
+                out.push({midi:m+12,startTime:n.startTime,endTime:e,duration:d,velocity:0.6,track:99,color:'#ff7043',chord:g.name}); });
+            return;
+        }
+        let root=40+(((g.r-40)%12)+12)%12;                   // Mi2 … Mib3
+        if(prevRoot!==null){ [root-12,root,root+12].forEach(c=>{ if(c>=38&&c<=52&&Math.abs(c-prevRoot)<Math.abs(root-prevRoot)) root=c; }); }
+        prevRoot=root;
+        let ivs=g.T.iv.slice(); if(g.T.sev!==undefined) ivs=[ivs[0],ivs[1],ivs[3]]; // com sétima: tônica, terça e sétima
+        const mids=ivs.map(i=>root+i);
+        const dur=Math.max(0.05,g.b-g.a-0.03);
+        mids.forEach((m,i)=>out.push({midi:m,startTime:g.a,endTime:g.a+dur,duration:dur,velocity:i===0?0.7:0.55,track:99,color:'#ffa500',chord:g.name}));
+    });
+    return out;
+}
+function setArrangement(k){
+    const idx=satbIdx(); if(!idx) return;
+    if(k==='four'){ setVoiceSel(state.voiceList.map(v=>v.track)); setInstrument('organ'); return; }
+    if(!state.pro){ openProModal('O modo "melodia + acordes" (soprano na mão direita e acordes na esquerda) é um recurso Pro.'); return; }
+    if(!state.chordSegs){ state.chordSegs=analyzeChords(); state.chordNotes=state.chordSegs?buildChordNotes(state.chordSegs):null; }
+    if(!state.chordNotes||!state.chordNotes.length){ toast('Não foi possível calcular os acordes deste arquivo'); return; }
+    state.arr='chords'; state.voiceSel=new Set([idx.S]); applyHandVoicing();
+    state.notes=state.allNotes.filter(n=>n.track===idx.S).concat(state.chordNotes).sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
+    state.totalNotes=state.notes.length; noteCountBadge.textContent=state.totalNotes+' notas';
+    refreshVoiceBar(); setInstrument('piano');
+    if(state.isPlaying){ const cp=state.currentTime; pausePlayback(); state.pausedAt=cp; startPlayback(); }
+    else { drawScene(); }
+}
+function updateChordBadge(){
+    const cb=document.getElementById('chordBadge'); if(!cb||cb.hidden||!state.chordSegs) return;
+    const t=state.currentTime; let nm='–';
+    for(const g of state.chordSegs){ if(t>=g.a-1e-3&&t<g.b){ nm=g.name; break; } if(g.a>t) break; }
+    if(cb.textContent!==nm) cb.textContent=nm;
+}
 function toggleVoice(t){
     if(!state.pro){ openProModal('Escolher uma voz (soprano, contralto, tenor ou baixo) é um recurso Pro.'); return; }
     const all=state.voiceList.map(v=>v.track), sel=new Set(state.voiceSel);
@@ -1502,6 +1677,7 @@ function toggleVoice(t){
     else { sel.has(t)?sel.delete(t):sel.add(t); setVoiceSel(sel.size?[...sel]:all); }   // senão liga/desliga; vazio = todas
 }
 function setVoiceSel(list){
+    state.arr='four';
     state.voiceSel=new Set(list);
     refreshVoiceBar();
     applyHandVoicing();
@@ -1512,7 +1688,7 @@ function setVoiceSel(list){
     else { drawScene(); }
 }
 function refreshVoiceBar(){
-    const all=state.voiceList.length, allOn=state.voiceSel.size===all;
+    const all=state.voiceList.length, allOn=state.voiceSel.size===all&&state.arr!=='chords';
     document.querySelectorAll('#voiceChips .voice-chip').forEach(b=>{
         const lock=!state.pro&&!b.classList.contains('all'); b.classList.toggle('locked',lock);
         const tn=b.lastChild; if(tn&&tn.nodeType===3){ const base=tn.nodeValue.replace(/ 🔒$/,''); tn.nodeValue=base+(lock?' 🔒':''); }
@@ -1520,8 +1696,15 @@ function refreshVoiceBar(){
     const pb=document.getElementById('previewBadge'); if(pb) pb.hidden=!(state.preview&&!state.pro);
     document.querySelectorAll('#voiceChips .voice-chip').forEach(b=>{
         if(b.classList.contains('all')) b.classList.toggle('on',allOn);
-        else { const t=+[...b.classList].find(c=>/^v\d+$/.test(c)).slice(1); b.classList.toggle('on',!allOn&&state.voiceSel.has(t)); }
+        else { const t=+[...b.classList].find(c=>/^v\d+$/.test(c)).slice(1); b.classList.toggle('on',!allOn&&state.arr!=='chords'&&state.voiceSel.has(t)); }
     });
+    document.querySelectorAll('#arrChips .voice-chip').forEach(b=>{
+        const k=b.dataset.arr, lock=!state.pro&&k==='chords';
+        b.classList.toggle('on',state.arr===k);
+        const tn=b.lastChild; if(tn&&tn.nodeType===3){ const base=tn.nodeValue.replace(/ 🔒$/,''); tn.nodeValue=base+(lock?' 🔒':''); }
+        b.classList.toggle('locked',lock);
+    });
+    const cb=document.getElementById('chordBadge'); if(cb){ cb.hidden=state.arr!=='chords'; updateChordBadge(); }
 }
 
 function buildPianoKeys(){
@@ -1626,6 +1809,7 @@ function updateUI(){
     progressFill.style.width=Math.min(100,Math.max(0,p))+'%';
     currentTimeEl.textContent=fmt(state.currentTime);
     totalTimeEl.textContent=fmt(state.duration);
+    updateChordBadge();
 }
 
 // ======================== DRAWING ========================
@@ -4013,7 +4197,7 @@ async function loadHymn(h){
         if(state.isPlaying) stopPlayback();
         state.source='hymn'; state.preview=preview; state.currentHymn=h;
         speedSelect.value='1'; state.speed=1;
-        await applyNotes(notes,duration,parsed.names);
+        await applyNotes(notes,duration,parsed.names,parsed);
         fileNameEl.textContent=String(h.n).padStart(3,'0')+' · '+h.title;
         hideModal('mHinos'); switchView('player');
         toast((preview?'Prévia: ':'')+String(h.n).padStart(3,'0')+' · '+h.title,'success');
