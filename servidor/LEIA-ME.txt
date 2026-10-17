@@ -1,0 +1,28 @@
+SERVIDOR DE LICENÇAS DO NOTE BOUNCE PRO  (grátis, feito pelo celular)
+=====================================================================
+O que ele faz: cada código vale para UM aparelho. Se a pessoa limpar os dados do app ou reinstalar,
+o Pro volta sozinho (precisa de internet). Você bloqueia ou libera códigos direto na planilha.
+
+PASSO A PASSO (no navegador do celular; se o menu não aparecer, ative "Site para computador")
+1) Abra sheets.google.com e crie uma planilha nova. Nome: "Licencas Note Bounce". Mantenha-a PRIVADA.
+2) Menu Extensões > Apps Script. Apague o que estiver lá, cole TODO o conteúdo do arquivo servidor/Code.gs e toque em Salvar.
+3) No topo, escolha a função  configurar  e toque em Executar. Autorize quando o Google pedir
+   (Avançado > Acessar projeto > Permitir). Isso cria a aba "licencas" com os títulos.
+4) Toque em Implantar > Nova implantação > tipo "App da Web".
+      Executar como: Eu     |     Quem tem acesso: Qualquer pessoa
+   Toque em Implantar e COPIE o endereço que termina em  /exec
+5) No arquivo index.html do projeto, procure  const PRO_SERVER=''  e coloque o endereço entre as aspas:
+      const PRO_SERVER='https://script.google.com/macros/s/XXXXXXXX/exec';
+   Suba para o GitHub e gere o APK normalmente.
+6) Volte à planilha, aba "licencas": cole os códigos na coluna A, a partir da linha 2 (um por linha).
+   Gere códigos com:  python3 scripts/gerar_codigos_pro.py 20 > ~/codigos.txt   (no Termux, fora da pasta do projeto)
+
+DIA A DIA
+- Cliente pagou: mande 1 código. Ele digita em  ⭐ Pro > Ativar. A planilha preenche "aparelho" e "ativado_em".
+- Cliente trocou de celular: apague as colunas B e C da linha dele. No celular novo, ele digita o código.
+- Reembolso/abuso: escreva  revogado  na coluna D. O app perde o Pro na próxima conferência (a cada 12 h com internet).
+- Se mudar o código do Code.gs: Implantar > Gerenciar implantações > Editar > Nova versão > Implantar (o endereço continua o mesmo).
+
+IMPORTANTE
+- Mantenha a chave de assinatura (Secrets do GitHub) sempre a mesma: o identificador do aparelho depende dela.
+- Não suba a lista de códigos nem a planilha para lugar nenhum público.
