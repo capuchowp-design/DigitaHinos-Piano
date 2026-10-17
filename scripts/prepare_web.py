@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Monta a pasta www/ (o app que vai dentro do APK) a partir dos arquivos do repositório.
 
-- Copia index.html, manifest.json, privacy.html e os ícones (NÃO copia sw.js: no APK não precisa).
+- Copia index.html, manifest.json, privacy.html, a pasta hinos/ e os ícones (NÃO copia sw.js: no APK não precisa).
 - Se as bibliotecas estiverem instaladas (npm install), usa Tone.js e a fonte Inter LOCAIS (funciona offline).
   Se não estiverem, mantém os links da internet que já estão no index.html.
 - Esconde o botão PIX no APK (defina SHOW_PIX=1 para mostrar).
@@ -22,6 +22,11 @@ for name in ["index.html", "manifest.json", "privacy.html"]:
         shutil.copy(src, WWW)
 for f in glob.glob(os.path.join(ROOT, "*.png")):
     shutil.copy(f, WWW)
+
+# hinário (hinos/*.mxl + index.json) vai dentro do APK
+if os.path.isdir(os.path.join(ROOT, "hinos")):
+    shutil.copytree(os.path.join(ROOT, "hinos"), os.path.join(WWW, "hinos"))
+    print("Hinos:", len(os.listdir(os.path.join(WWW, "hinos"))), "arquivos")
 
 index_path = os.path.join(WWW, "index.html")
 html = open(index_path, encoding="utf-8").read()
