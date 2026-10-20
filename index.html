@@ -4082,6 +4082,7 @@ function cyrb53(str,seed){
 function proCheck(id){ let v=cyrb53(id+PRO_SALT)%1048576, o=''; for(let i=0;i<4;i++){ o=PRO_ALPHA[v%32]+o; v=Math.floor(v/32); } return o; }
 function proValid(code){
     const c=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(PRO_SERVER) return c.length>=8&&c.length<=16;   // com servidor, quem decide é a planilha (códigos PRO-XXXX-XXXX = 11 caracteres)
     if(c.length!==12) return false;
     for(const ch of c) if(!PRO_ALPHA.includes(ch)) return false;
     return proCheck(c.slice(0,8))===c.slice(8);
