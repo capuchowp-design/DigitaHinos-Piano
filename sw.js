@@ -1,5 +1,5 @@
 // Mude este número a CADA publicação nova no GitHub (v3 -> v4 -> v5...)
-const CACHE_NAME = 'note-bounce-v18';
+const CACHE_NAME = 'note-bounce-v19';
 const CORE = ['./', './index.html', './manifest.json'];
 const EXTRA = [
   './icon-192x192.png', './icon-512x512.png', './apple-touch-icon.png', './favicon-32x32.png',
@@ -34,6 +34,8 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  // Servidor de licenças (Apps Script): nunca interceptar nem guardar em cache
+  if (url.hostname.endsWith('google.com') || url.hostname.endsWith('googleusercontent.com')) return;
 
   // Amostras do piano (Salamander): cache primeiro. Baixa uma vez e depois toca rápido e até offline.
   if (url.hostname === 'tonejs.github.io' || (url.hostname === 'cdn.jsdelivr.net' && url.pathname.includes('/Tonejs/audio'))) {

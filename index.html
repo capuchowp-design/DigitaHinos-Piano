@@ -4102,7 +4102,11 @@ async function proDeviceId(){
 async function proCall(params){
     const u=PRO_SERVER+(PRO_SERVER.includes('?')?'&':'?')+new URLSearchParams(params).toString();
     const ctl=new AbortController(), t=setTimeout(()=>ctl.abort(),15000);
-    try{ const r=await fetch(u,{signal:ctl.signal,redirect:'follow'}); return await r.json(); } finally{ clearTimeout(t); }
+    try{
+        const r=await fetch(u,{signal:ctl.signal,redirect:'follow',cache:'no-store'});
+        const txt=await r.text();
+        try{ return JSON.parse(txt); }catch(e){ const er=new Error('bad_json'); er.bad=true; throw er; }
+    } finally{ clearTimeout(t); }
 }
 const PRO_ERR={not_found:'Código não encontrado. Confira e tente de novo.',used:'Este código já foi usado em outro aparelho.',revoked:'Este código foi cancelado.',unbound:'Este código foi liberado para outro aparelho.',bad_request:'Código inválido.',busy:'Servidor ocupado. Tente de novo em instantes.',server_not_configured:'Servidor de licenças não configurado.',no_license:'Nenhuma licença Pro encontrada para este aparelho.'};
 
@@ -4143,7 +4147,7 @@ async function proActivate(){
     try{
         const dev=await proDeviceId(), r=await proCall({a:'activate',c:code,d:dev});
         if(r&&r.ok) await grantPro({code,dev}); else bad(PRO_ERR[r&&r.error]||'Não foi possível ativar agora.');
-    }catch(e){ bad('Sem conexão com o servidor. Verifique a internet e tente de novo.'); }
+    }catch(e){ bad(e&&e.bad?'O servidor respondeu algo inesperado. Confira no Apps Script: Implantar > acesso "Qualquer pessoa" e nova versão.':'Sem conexão com o servidor. Verifique a internet e tente de novo.'); }
     btn.disabled=false;
 }
 // procura no servidor uma licença já ligada a este aparelho (depois de limpar dados / reinstalar)
