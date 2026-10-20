@@ -4100,10 +4100,10 @@ async function proDeviceId(){
     catch(e){ return cyrb53('nb|'+raw).toString(16).padStart(16,'0'); }
 }
 async function proCall(params){
-    const u=PRO_SERVER+(PRO_SERVER.includes('?')?'&':'?')+new URLSearchParams(params).toString();
+    const u=PRO_SERVER+(PRO_SERVER.includes('?')?'&':'?')+new URLSearchParams(Object.assign({},params,{t:Date.now()})).toString();
     const ctl=new AbortController(), t=setTimeout(()=>ctl.abort(),15000);
     try{
-        const r=await fetch(u,{signal:ctl.signal,redirect:'follow',cache:'no-store'});
+        const r=await fetch(u,{signal:ctl.signal,redirect:'follow'});
         const txt=await r.text();
         try{ return JSON.parse(txt); }catch(e){ const er=new Error('bad_json'); er.bad=true; throw er; }
     } finally{ clearTimeout(t); }
@@ -4144,10 +4144,18 @@ async function proActivate(){
     if(!proValid(code)){ bad('Código inválido. Confira e tente de novo.'); return; }
     if(!PRO_SERVER){ await grantPro({code,dev:''}); return; }
     btn.disabled=true; msg.style.color=''; msg.textContent='Verificando…';
+    let dev='', r=null;
     try{
-        const dev=await proDeviceId(), r=await proCall({a:'activate',c:code,d:dev});
-        if(r&&r.ok) await grantPro({code,dev}); else bad(PRO_ERR[r&&r.error]||'Não foi possível ativar agora.');
-    }catch(e){ bad(e&&e.bad?'O servidor respondeu algo inesperado. Confira no Apps Script: Implantar > acesso "Qualquer pessoa" e nova versão.':'Sem conexão com o servidor. Verifique a internet e tente de novo.'); }
+        dev=await proDeviceId(); r=await proCall({a:'activate',c:code,d:dev});
+    }catch(e){
+        bad(e&&e.bad?'O servidor respondeu algo inesperado (não é JSON). Confira a implantação do Apps Script.':'Sem conexão com o servidor. ['+((e&&e.name)||'erro')+': '+((e&&e.message)||'')+']');
+        btn.disabled=false; return;
+    }
+    try{
+        if(r&&r.ok) await grantPro({code,dev}); else bad(PRO_ERR[r&&r.error]||('Resposta do servidor: '+JSON.stringify(r)));
+    }catch(e){
+        bad('O servidor liberou o código, mas deu erro no app: '+((e&&e.name)||'erro')+': '+((e&&e.message)||''));
+    }
     btn.disabled=false;
 }
 // procura no servidor uma licença já ligada a este aparelho (depois de limpar dados / reinstalar)
