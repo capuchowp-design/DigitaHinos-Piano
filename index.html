@@ -4065,7 +4065,7 @@ window.__pb={parseScoreFile,pbBuildScore,renderWav,wavBlob,makePdf,svgToJpeg,sna
 // Grátis: prévia dos hinos, velocidade 1x e todas as vozes juntas.
 // Pro: hinos completos, velocidade livre e escolha de voz (soprano / contralto / tenor / baixo).
 const PRO_SALT='nb-pro-05e53ddd2ebcd9c6';          // o gerador de códigos (scripts/gerar_codigos_pro.py) lê este valor
-const PRO_SERVER='https://script.google.com/macros/s/AKfycbxk953yAovePVViN4Y1ykXXBrQLfeoUBoBGtpE45V4ZPNB7LJdiTpxx0IR88FTTG-tWmw/exec';   // endereço do servidor de licenças (Apps Script, termina em /exec). Veja servidor/LEIA-ME.txt
+const PRO_SERVER='https://script.google.com/macros/s/AKfycbw7FCtijht2G5lWacGZbrTk7f5MHLOFkZ6wTBToiomma3-hhYAxekn8iLm3Sk_RMUILgA/exec';   // endereço do servidor de licenças (Apps Script, termina em /exec). Veja servidor/LEIA-ME.txt
                        // Vazio = modo simples: o código só é conferido no próprio app (sem travar em 1 aparelho).
 const PRO_PREVIEW_SECONDS=30;                         // tamanho da prévia grátis de cada hino
 const PRO_INFO={
@@ -4099,14 +4099,20 @@ async function proDeviceId(){
     try{ return hex2(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode('nb|'+raw)))).slice(0,40); }
     catch(e){ return cyrb53('nb|'+raw).toString(16).padStart(16,'0'); }
 }
-async function proCall(params){
-    const u=PRO_SERVER+(PRO_SERVER.includes('?')?'&':'?')+new URLSearchParams(Object.assign({},params,{t:Date.now()})).toString();
-    const ctl=new AbortController(), t=setTimeout(()=>ctl.abort(),15000);
-    try{
-        const r=await fetch(u,{signal:ctl.signal,redirect:'follow'});
-        const txt=await r.text();
-        try{ return JSON.parse(txt); }catch(e){ const er=new Error('bad_json'); er.bad=true; throw er; }
-    } finally{ clearTimeout(t); }
+// Chamada ao servidor por JSONP (tag <script>): não depende de CORS, que o Google bloqueia em alguns navegadores/WebViews.
+function proCall(params){
+    return new Promise((resolve,reject)=>{
+        const cb='nbcb'+Date.now().toString(36)+Math.floor(Math.random()*1e6).toString(36);
+        const s=document.createElement('script'); let done=false, tm=null;
+        const clean=()=>{ done=true; clearTimeout(tm); try{ delete window[cb]; }catch(e){ window[cb]=undefined; } if(s.parentNode) s.parentNode.removeChild(s); };
+        window[cb]=d=>{ if(done) return; clean(); resolve(d); };
+        tm=setTimeout(()=>{ if(!done){ clean(); const e=new Error('tempo esgotado'); e.name='Timeout'; reject(e); } },20000);
+        s.onerror=()=>{ if(!done){ clean(); const e=new Error('não foi possível carregar o servidor'); e.name='ScriptError'; reject(e); } };
+        s.onload=()=>{ setTimeout(()=>{ if(!done){ clean(); const e=new Error('bad_json'); e.bad=true; reject(e); } },800); };
+        const q=new URLSearchParams(Object.assign({},params,{callback:cb,t:Date.now()})).toString();
+        s.src=PRO_SERVER+(PRO_SERVER.includes('?')?'&':'?')+q;
+        document.head.appendChild(s);
+    });
 }
 const PRO_ERR={not_found:'Código não encontrado. Confira e tente de novo.',used:'Este código já foi usado em outro aparelho.',revoked:'Este código foi cancelado.',unbound:'Este código foi liberado para outro aparelho.',bad_request:'Código inválido.',busy:'Servidor ocupado. Tente de novo em instantes.',server_not_configured:'Servidor de licenças não configurado.',no_license:'Nenhuma licença Pro encontrada para este aparelho.'};
 
