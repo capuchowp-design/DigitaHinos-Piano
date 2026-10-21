@@ -1743,6 +1743,17 @@ function buildAdvancedAccompaniment(segs){
         prevRoot=root; roots.set(g,root);
     });
     const fold=m=>{ while(m>64) m-=12; return m; };
+    // melodia (soprano já com as passagens) para conferir se um acorde de passagem casa com ela
+    const sopL=state.sopAdv||(state.sopAdv=buildAdvancedSoprano());
+    const melAt=(t0,t1)=>sopL.filter(n=>n.startTime<t1-1e-3&&n.endTime>t0+1e-3).map(n=>n.midi);
+    const clash=(tones,mel)=>mel.some(sm=>tones.some(c=>{ const d=((sm-c)%12+12)%12; return d===1||d===11; }));
+    // passo da passagem: acorde diatônico sobre o grau (tríade) se casar com a melodia; senão tônicas em oitava; senão só a nota
+    const walkStep=(m,t0,t1)=>{
+        const mel=melAt(t0,t1), i=SC.indexOf(m);
+        if(i>=0&&i+4<SC.length){ const tr=[m,SC[i+2],SC[i+4]]; if(tr[2]<=64&&!clash(tr,mel)) return tr; }
+        const oc=[m,m+12]; if(m+12<=66&&!clash(oc,mel)) return oc;
+        return [m];
+    };
     segs.forEach((g,gi)=>{
         if(g.solo){
             g.notes.forEach(n=>{ const m=(n.midi0!==undefined?n.midi0:n.midi), e=Math.max(n.startTime+0.05,n.endTime-0.03), d=e-n.startTime;
@@ -1756,9 +1767,11 @@ function buildAdvancedAccompaniment(segs){
         const slot=(bl<0.38&&!compound)?bl:bl/2;
         const n=Math.round(len/slot);
         const mid=sev!==undefined?sev:12;
-        // acorde curto demais para arpejar: acorde em bloco
+        // trecho curto: arpejo incompleto (fundamental e quinta), nunca acorde parado
         if(n<3){
-            [R,R+Th,R+F].forEach((m,i)=>out.push({midi:m,startTime:g.a,endTime:g.b-0.03,duration:Math.max(0.05,len-0.03),velocity:i===0?0.7:0.55,track:99,color:'#ffa500',chord:g.name}));
+            const nn=Math.max(1,n), pt2=nn===1?[0]:[0,F], st2=Math.min(slot,len/nn);
+            pt2.forEach((o,i)=>{ const t0=g.a+i*st2, last=i===nn-1, e=last?g.b-0.03:t0+st2*1.1;
+                out.push({midi:fold(R+o),startTime:t0,endTime:Math.max(t0+0.05,e),duration:Math.max(0.05,Math.max(t0+0.05,e)-t0),velocity:i===0?0.72:0.5,track:99,color:'#ffa500',chord:g.name}); });
             return;
         }
         // 2) padrão do arpejo (deslocamentos em semitons a partir da fundamental)
@@ -1783,14 +1796,16 @@ function buildAdvancedAccompaniment(segs){
                 // raízes vizinhas: nota de preparação por meio-tom abaixo do próximo acorde (ou o grau acima)
                 walk.push(Math.abs(R-R1)<=2?R1-1:SC[Math.min(SC.length-1,i1+1)]); cnt=1;
             }
-            walk.forEach((m,k)=>{ const si=n-cnt+k; if(si>=2) notes[si]={m:fold(m),walk:true}; });
+            walk.forEach((m,k)=>{ const si=n-cnt+k; if(si>=2){ const t0=g.a+si*slot, tones=walkStep(m,t0,t0+slot); notes[si]={m:tones[0],extra:tones.slice(1),walk:true}; } });
         }
         // 4) notas
         notes.forEach((x,i)=>{
             const t0=g.a+i*slot, last=i===notes.length-1;
             const e=last?g.b-0.03:Math.min(g.b-0.03,t0+slot*(x.walk?1.05:(i%pat.length===0?2.2:1.15)));
-            out.push({midi:x.m,startTime:t0,endTime:Math.max(t0+0.05,e),duration:Math.max(0.05,Math.max(t0+0.05,e)-t0),
-                velocity:i===0?0.72:(x.walk?0.58:(i%2===0?0.5:0.44)),track:99,color:x.walk?'#ffcc66':'#ffa500',chord:g.name});
+            const ee=Math.max(t0+0.05,e);
+            out.push({midi:x.m,startTime:t0,endTime:ee,duration:Math.max(0.05,ee-t0),
+                velocity:i===0?0.72:(x.walk?0.6:(i%2===0?0.5:0.44)),track:99,color:x.walk?'#ffcc66':'#ffa500',chord:g.name});
+            (x.extra||[]).forEach(m2=>out.push({midi:m2,startTime:t0,endTime:ee,duration:Math.max(0.05,ee-t0),velocity:0.5,track:99,color:'#ffcc66',chord:g.name}));
         });
     });
     return out;
