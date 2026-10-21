@@ -301,6 +301,7 @@
         /* SELETOR DE VOZES (player) */
         .voice-bar { display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:wrap; padding:6px 12px; background:var(--bg-controls); border-top:1px solid var(--border-main); flex-shrink:0; }
         .voice-bar[hidden] { display:none; }
+        .voice-bar.arr-only .vb-label{ display:none; }
         .voice-bar .vb-label { font-size:11px; color:var(--text-muted); margin-right:2px; }
         .voice-chip { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:16px; border:1px solid var(--border-btn); background:var(--bg-btn); color:var(--text-muted); font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; min-height:32px; }
         .voice-chip .dot { width:9px; height:9px; border-radius:50%; background:var(--vc,#888); opacity:.35; transition:opacity .15s; }
@@ -1512,6 +1513,7 @@ async function applyNotes(notes, duration, names, meta){
     welcomeScreen.classList.add('hidden');
     resetPlayback();
     drawScene();
+    if(satbIdx()&&state.pro&&state.beats&&state.beats.length>2) setArrangement('arp');   // abre direto no piano (melodia + arpejo)
 }
 
 // ======================== SELETOR DE VOZES ========================
@@ -1531,12 +1533,13 @@ function buildVoiceBar(notes, names){
     if(satbIdx()&&state.beats&&state.beats.length>2){
         const mkA=(k,label,title)=>{ const b=document.createElement('button'); b.type='button'; b.className='voice-chip arr'; b.dataset.arr=k; b.title=title;
             b.appendChild(document.createTextNode(label)); b.addEventListener('click',()=>setArrangement(k)); ac.appendChild(b); };
-        mkA('four','🎹 4 vozes (órgão)','Soprano, contralto, tenor e baixo, com som de órgão');
         mkA('chords','🎶 Melodia + acordes (piano)','Mão direita: soprano · Mão esquerda: acordes calculados da partitura');
         mkA('arp','🎼 Melodia + arpejo (piano)','Mão direita: soprano · Mão esquerda: arpejo (baixo Alberti, dedilhado aberto ou arpejo lento, conforme o compasso)');
         mkA('arp2','✨ Melodia + arpejo avançado (piano)','Mão direita: soprano com passagens em fins de frase · Mão esquerda: arpejo largo com passagens ligando um acorde ao outro');
         const sep=document.createElement('span'); sep.className='arr-sep'; ac.appendChild(sep);
     }
+    bar.classList.toggle('arr-only',!!satbIdx());
+    if(satbIdx()){ const sp=ac.querySelector('.arr-sep'); if(sp) sp.remove(); bar.hidden=false; refreshVoiceBar(); return; }   // hinos: só os modos de piano
     const mk=(label,color,cls,fn,title)=>{
         const b=document.createElement('button'); b.type='button'; b.className='voice-chip '+cls; b.title=title||'';
         const d=document.createElement('span'); d.className='dot'; b.appendChild(d); b.appendChild(document.createTextNode(label));
@@ -1725,8 +1728,9 @@ function buildChordNotes(segs,arp){
         else if(bl>=1.1){ step=bl/2; pat=[R,M,T,M12]; }
         else if(bpb===3){ step=bl/2; pat=[R,T,M12,T,M12,T]; }
         else { step=bl/2; pat=[R,T,M,T]; }                                        // Alberti
-        let n=Math.round(len/step);
-        if(n<3){ const st2=Math.max(0.09,len/Math.max(2,Math.min(3,Math.floor(len/0.09)))); step=Math.min(step,st2); n=Math.max(1,Math.round(len/step)); }   // trecho curto: só o começo do arpejo, nunca acorde parado
+        // o tempo de cada nota é sempre o mesmo; se o acorde dura menos que o padrão completo, toca só o começo dele
+        // (ex.: grave · quinta) e já passa para o arpejo do próximo acorde
+        const n=Math.max(1,Math.round(len/step));
         for(let i=0;i<n;i++){
             const t0=g.a+i*step, last=i===n-1, t1=last?g.b-0.03:t0+step*(i%pat.length===0?2:0.98);
             const e=Math.max(t0+0.05,Math.min(t1,g.b-0.03)), d=e-t0, m=pat[i%pat.length];
@@ -1776,7 +1780,7 @@ function buildAdvancedAccompaniment(segs){
     // melodia (soprano já com as passagens) para conferir se um acorde de passagem casa com ela
     const sopL=state.sopAdv||(state.sopAdv=buildAdvancedSoprano());
     const melAt=(t0,t1)=>sopL.filter(n=>n.startTime<t1-1e-3&&n.endTime>t0+1e-3).map(n=>n.midi);
-    const SCPC=new Set(SC.map(x=>x%12)); let extElig=0;
+    const SCPC=new Set(SC.map(x=>x%12)); let walkN=0;
     // Mão esquerda = arpejo puro: uma nota por vez (a raiz sustenta só enquanto toca a seguinte). Nada de acordes de 3 ou 4
     // notas seguradas. As únicas notas dobradas são as das "respostas do baixo", copiadas da partitura: nota + a mesma uma oitava acima.
     segs.forEach((g,gi)=>{
@@ -1802,18 +1806,8 @@ function buildAdvancedAccompaniment(segs){
                 out.push({midi:fold(R+o),startTime:t0,endTime:Math.max(t0+0.05,e),duration:Math.max(0.05,Math.max(t0+0.05,e)-t0),velocity:i===0?0.72:0.5,track:99,color:'#ffa500',chord:g.name}); });
             return;
         }
-        // 2) extensões (sétima, nona, décima primeira): só em trechos longos, notas da escala e sem meio-tom contra a melodia
-        let ext=null;
-        if(n>=4&&!['°','m7(b5)','+'].includes(g.T.suf)){
-            const melG=melAt(g.a,g.b), okTone=o=>SCPC.has(((R+o)%12+12)%12)&&!melG.some(sm=>{ const d=(((sm-(R+o))%12)+12)%12; return d===1||d===11; });
-            const minor=g.T.suf==='m'||g.T.suf==='m7';
-            let S2=sev;
-            if(S2===undefined) S2=minor?10:(okTone(11)?11:10);
-            if(!okTone(S2)) S2=undefined;
-            let N=okTone(14)?14:undefined;
-            if(minor&&okTone(17)&&(N===undefined||extElig%2===1)) N=17;
-            if((S2!==undefined||N!==undefined)&&(extElig++%2===0)) ext={S:S2===undefined?12:S2,N:N===undefined?(S2===undefined?12:S2+12):N};
-        }
+        // 2) sem notas de extensão (9ª, 11ª…): o arpejo usa só as notas do próprio acorde
+        const ext=null;
         const S2x=ext?ext.S:mid, N9=ext?ext.N:12+Th;
         // 3) padrão do arpejo (deslocamentos em semitons a partir da fundamental)
         let pat;
@@ -1834,7 +1828,7 @@ function buildAdvancedAccompaniment(segs){
         const notes=[]; for(let i=0;i<n;i++) notes.push({m:fold(R+pat[i%pat.length]),walk:false,ext:!!ext});
         // 4) passagem até o próximo acorde (só se ele vem logo em seguida e a fundamental muda)
         let nx=null; for(let k=gi+1;k<segs.length;k++){ if(Math.abs(segs[k].a-g.b)<0.08){ nx=segs[k]; } break; }
-        if(nx&&!nx.solo&&roots.has(nx)&&nx.r!==g.r&&n>=4){
+        if(nx&&!nx.solo&&roots.has(nx)&&nx.r!==g.r&&n>=4&&(walkN++%3===0)){   // passagem só em 1 de cada 3 trocas de acorde
             const R1=roots.get(nx), i0=advSnap(SC,R), i1=advSnap(SC,R1), d=i1-i0, sg=Math.sign(d), ci=ix=>SC[Math.max(0,Math.min(SC.length-1,ix))];
             let path=[];   // {m, chordy}
             if(Math.abs(d)>=2&&dense4){
