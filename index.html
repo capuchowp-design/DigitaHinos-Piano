@@ -1767,7 +1767,10 @@ function buildAdvancedAccompaniment(segs){
         const R=roots.get(g), iv=g.T.iv, Th=iv[1], F=iv[2], sev=g.T.sev;
         const bl=tl.beatLenAt(g.a), len=g.b-g.a, ts=tl.tsAt(g.a), bpb=tl.bpbAt(g.a);
         const compound=ts?COMP.includes(ts):(bpb>=6&&bpb%3===0);
-        const slot=(bl<0.38&&!compound)?bl:bl/2;
+        // notas com metade do valor do arpejo comum (colcheia → semicolcheia) sempre que o andamento permitir
+        const slotOld=(bl<0.38&&!compound)?bl:bl/2;
+        const dense=(slotOld/2)>=0.13, slot=dense?slotOld/2:slotOld;
+        const perBeat=Math.round(bl/slot), dense4=dense&&perBeat>=4;
         const n=Math.round(len/slot);
         const mid=sev!==undefined?sev:12;
         // trecho curto: arpejo incompleto (fundamental e quinta), nunca acorde parado
@@ -1777,17 +1780,7 @@ function buildAdvancedAccompaniment(segs){
                 out.push({midi:fold(R+o),startTime:t0,endTime:Math.max(t0+0.05,e),duration:Math.max(0.05,Math.max(t0+0.05,e)-t0),velocity:i===0?0.72:0.5,track:99,color:'#ffa500',chord:g.name}); });
             return;
         }
-        // 2) padrão do arpejo (deslocamentos em semitons a partir da fundamental)
-        let pat;
-        if(compound){
-            const A=[0,F,12], B=[12+Th,mid===12?12:mid,F];
-            const groups=Math.max(1,Math.round(n/3)); pat=[]; for(let i=0;i<groups;i++) pat=pat.concat(i%2===0?A:B);
-        } else if(bpb===3||ts==='3/4'||ts==='3/2'){ pat=[0,F,mid,12+Th,mid,F]; }
-        else if(bpb===2||ts==='2/4'){ pat=[0,F,12,F]; }
-        else if(slot===bl){ pat=[0,F,12,F]; }
-        else { pat=[0,F,mid,12+Th,mid,F,Th,F]; }
-        // extensões (sétima, nona, décima primeira): só em trechos longos, notas da escala e sem meio-tom contra a melodia;
-        // o arpejo fica mais cheio, com as notas preenchendo o espaço entre a fundamental e a décima
+        // 2) extensões (sétima, nona, décima primeira): só em trechos longos, notas da escala e sem meio-tom contra a melodia
         let ext=null;
         if(n>=4&&!['°','m7(b5)','+'].includes(g.T.suf)){
             const melG=melAt(g.a,g.b), okTone=o=>SCPC.has(((R+o)%12+12)%12)&&!melG.some(sm=>{ const d=(((sm-(R+o))%12)+12)%12; return d===1||d===11; });
@@ -1799,29 +1792,50 @@ function buildAdvancedAccompaniment(segs){
             if(minor&&okTone(17)&&(N===undefined||extElig%2===1)) N=17;
             if((S2!==undefined||N!==undefined)&&(extElig++%2===0)) ext={S:S2===undefined?12:S2,N:N===undefined?(S2===undefined?12:S2+12):N};
         }
-        if(ext){
-            const S2=ext.S, N=ext.N;
-            if(compound){ pat=[]; const groups=Math.max(1,Math.round(n/3)); for(let i=0;i<groups;i++) pat=pat.concat(i%2===0?[0,F,S2]:[N,S2,F]); }
-            else if(bpb===3||ts==='3/4'||ts==='3/2') pat=[0,F,S2,N,S2,F];
-            else if(bpb===2||ts==='2/4'||slot===bl) pat=[0,F,S2,N];
-            else pat=[0,F,S2,N,12+Th,N,S2,F];
-        }
+        const S2x=ext?ext.S:mid, N9=ext?ext.N:12+Th;
+        // 3) padrão do arpejo (deslocamentos em semitons a partir da fundamental)
+        let pat;
+        if(dense4){
+            // dois desenhos que se completam (o segundo não repete o primeiro): A sobe em onda, B desce e volta pela terça
+            const A8=ext?[0,F,S2x,N9,12+Th,N9,S2x,F]:[0,F,mid,12+Th,mid,F,Th,F];
+            const B8=[0,Th,F,12,ext?N9:12+Th,12,F,Th];
+            const A6=ext?[0,F,S2x,N9,S2x,F]:[0,F,mid,12+Th,mid,F], B6=[0,Th,F,12,F,Th];
+            if(compound||bpb===3||ts==='3/4'||ts==='3/2') pat=A6.concat(B6);
+            else if(bpb===2||ts==='2/4') pat=A8;
+            else pat=A8.concat(B8);
+        } else if(compound){
+            const A=ext?[0,F,ext.S]:[0,F,12], B=ext?[ext.N,ext.S,F]:[12+Th,mid===12?12:mid,F];
+            const groups=Math.max(1,Math.round(n/3)); pat=[]; for(let i=0;i<groups;i++) pat=pat.concat(i%2===0?A:B);
+        } else if(bpb===3||ts==='3/4'||ts==='3/2'){ pat=ext?[0,F,ext.S,ext.N,ext.S,F]:[0,F,mid,12+Th,mid,F]; }
+        else if(bpb===2||ts==='2/4'||slot===bl){ pat=ext?[0,F,ext.S,ext.N]:[0,F,12,F]; }
+        else { pat=ext?[0,F,ext.S,ext.N,12+Th,ext.N,ext.S,F]:[0,F,mid,12+Th,mid,F,Th,F]; }
         const notes=[]; for(let i=0;i<n;i++) notes.push({m:fold(R+pat[i%pat.length]),walk:false,ext:!!ext});
-        // 3) passagem até o próximo acorde (só se ele vem logo em seguida e a fundamental muda)
+        // 4) passagem até o próximo acorde (só se ele vem logo em seguida e a fundamental muda)
         let nx=null; for(let k=gi+1;k<segs.length;k++){ if(Math.abs(segs[k].a-g.b)<0.08){ nx=segs[k]; } break; }
         if(nx&&!nx.solo&&roots.has(nx)&&nx.r!==g.r&&n>=4){
-            const R1=roots.get(nx), i0=advSnap(SC,R), i1=advSnap(SC,R1), d=i1-i0, sg=Math.sign(d);
-            let cnt=0; const walk=[];
-            if(Math.abs(d)>=2){
-                cnt=Math.min(Math.abs(d)-1,3,n-2);
-                for(let s=cnt;s>=1;s--) walk.push(SC[i1-sg*s]);
+            const R1=roots.get(nx), i0=advSnap(SC,R), i1=advSnap(SC,R1), d=i1-i0, sg=Math.sign(d), ci=ix=>SC[Math.max(0,Math.min(SC.length-1,ix))];
+            let path=[];   // {m, chordy}
+            if(Math.abs(d)>=2&&dense4){
+                // passagem de cerca de um tempo: bordadura em volta da nota de saída e depois os graus até o próximo acorde
+                // (ex.: Mi → Dó: Mi Fá Mi Ré | Dó)
+                const m=Math.abs(d)-1, L=Math.min(Math.max(m,perBeat),n-3);
+                if(L>=1){
+                    const mm=Math.min(m,L), e=L-mm, op=-sg, idxs=[];
+                    for(let k=0;k<e;k++) idxs.unshift(k%2===0?i0:i0+op);
+                    for(let s=mm;s>=1;s--) idxs.push(i1-sg*s);
+                    path=idxs.map((ix,k)=>({m:ci(ix),chordy:k>=e&&k>=idxs.length-2}));
+                }
+            } else if(Math.abs(d)>=2){
+                const cnt=Math.min(Math.abs(d)-1,3,n-2);
+                for(let s=cnt;s>=1;s--) path.push({m:SC[i1-sg*s],chordy:true});
             } else {
                 // raízes vizinhas: nota de preparação por meio-tom abaixo do próximo acorde (ou o grau acima)
-                walk.push(Math.abs(R-R1)<=2?R1-1:SC[Math.min(SC.length-1,i1+1)]); cnt=1;
+                path.push({m:Math.abs(R-R1)<=2?R1-1:ci(i1+1),chordy:true});
             }
-            walk.forEach((m,k)=>{ const si=n-cnt+k; if(si>=2){ const t0=g.a+si*slot, tones=walkStep(m,t0,t0+slot); notes[si]={m:tones[0],extra:tones.slice(1),walk:true}; } });
+            const cnt=path.length;
+            path.forEach((p,k)=>{ const si=n-cnt+k; if(si>=2){ const t0=g.a+si*slot, tones=p.chordy?walkStep(p.m,t0,t0+slot):[p.m]; notes[si]={m:tones[0],extra:tones.slice(1),walk:true}; } });
         }
-        // 4) notas
+        // 5) notas
         notes.forEach((x,i)=>{
             const t0=g.a+i*slot, last=i===notes.length-1;
             const e=last?g.b-0.03:Math.min(g.b-0.03,t0+slot*(x.walk?1.05:(i%pat.length===0?2.2:1.15)));
