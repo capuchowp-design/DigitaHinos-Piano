@@ -1766,7 +1766,11 @@ function advTools(){
     const tsAt=t=>{ if(!bi||!qOf) return null; const q=qOf(t); let i=bi.length-1; while(i>0&&bi[i].q>q+1e-6) i--; return bi[i].ts; };
     return {beatLenAt,bpbAt,tsAt};
 }
-function buildAdvancedAccompaniment(segs){
+function buildAdvancedAccompaniment(segs0){
+    // "respostas do baixo" (trechos copiados da partitura): mantém só 1 de cada 3; nos demais o arpejo do acorde vizinho continua
+    let soloN=0, lastCh=null; const segs=segs0.map(g=>g.solo?g:(lastCh=g,g));
+    segs0.forEach((g,i)=>{ if(g.solo&&(soloN++%3!==0)){ let c=null; for(let k=i-1;k>=0&&!c;k--) if(!segs0[k].solo) c=segs0[k]; for(let k=i+1;k<segs0.length&&!c;k++) if(!segs0[k].solo) c=segs0[k];
+        if(c) segs[i]={a:g.a,b:g.b,r:c.r,T:c.T,name:c.name}; } });
     const out=[], SC=advScale(), tl=advTools(), COMP=['6/8','9/8','12/8'];
     // 1) fundamental de cada acorde (mesma escolha do arpejo normal: oitava mais próxima do acorde anterior)
     const roots=new Map(); let prevRoot=null;
@@ -1808,23 +1812,21 @@ function buildAdvancedAccompaniment(segs){
         }
         // 2) sem notas de extensão (9ª, 11ª…): o arpejo usa só as notas do próprio acorde
         const ext=null;
-        const S2x=ext?ext.S:mid, N9=ext?ext.N:12+Th;
-        // 3) padrão do arpejo (deslocamentos em semitons a partir da fundamental)
+        // 3) padrão do arpejo (deslocamentos em semitons a partir da fundamental). Tudo dentro de UMA oitava (0…12):
+        // a mão esquerda quase não se mexe. mid = sétima (se o acorde tem) ou a oitava.
         let pat;
         if(dense4){
-            // dois desenhos que se completam (o segundo não repete o primeiro): A sobe em onda, B desce e volta pela terça
-            const A8=ext?[0,F,S2x,N9,12+Th,N9,S2x,F]:[0,F,mid,12+Th,mid,F,Th,F];
-            const B8=[0,Th,F,12,ext?N9:12+Th,12,F,Th];
-            const A6=ext?[0,F,S2x,N9,S2x,F]:[0,F,mid,12+Th,mid,F], B6=[0,Th,F,12,F,Th];
+            const A8=[0,F,Th,F,mid,F,Th,F], B8=[0,Th,F,Th,F,mid,F,Th];
+            const A6=[0,F,Th,F,mid,F], B6=[0,Th,F,mid,F,Th];
             if(compound||bpb===3||ts==='3/4'||ts==='3/2') pat=A6.concat(B6);
             else if(bpb===2||ts==='2/4') pat=A8;
             else pat=A8.concat(B8);
         } else if(compound){
-            const A=ext?[0,F,ext.S]:[0,F,12], B=ext?[ext.N,ext.S,F]:[12+Th,mid===12?12:mid,F];
+            const A=[0,F,mid], B=[Th,F,mid];
             const groups=Math.max(1,Math.round(n/3)); pat=[]; for(let i=0;i<groups;i++) pat=pat.concat(i%2===0?A:B);
-        } else if(bpb===3||ts==='3/4'||ts==='3/2'){ pat=ext?[0,F,ext.S,ext.N,ext.S,F]:[0,F,mid,12+Th,mid,F]; }
-        else if(bpb===2||ts==='2/4'||slot===bl){ pat=ext?[0,F,ext.S,ext.N]:[0,F,12,F]; }
-        else { pat=ext?[0,F,ext.S,ext.N,12+Th,ext.N,ext.S,F]:[0,F,mid,12+Th,mid,F,Th,F]; }
+        } else if(bpb===3||ts==='3/4'||ts==='3/2'){ pat=[0,F,Th,F,mid,F]; }
+        else if(bpb===2||ts==='2/4'||slot===bl){ pat=[0,F,12,F]; }
+        else { pat=[0,F,Th,F,mid,F,Th,F]; }
         const notes=[]; for(let i=0;i<n;i++) notes.push({m:fold(R+pat[i%pat.length]),walk:false,ext:!!ext});
         // 4) passagem até o próximo acorde (só se ele vem logo em seguida e a fundamental muda)
         let nx=null; for(let k=gi+1;k<segs.length;k++){ if(Math.abs(segs[k].a-g.b)<0.08){ nx=segs[k]; } break; }
