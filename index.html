@@ -1470,7 +1470,7 @@ function loadMidiFile(file){
 
 async function applyNotes(notes, duration, names, meta){
     notes.forEach(n=>{ if(!n.color) n.color=gc(n.track||0); });
-    state.arr='four'; state.chordNotes=null; state.chordNotesBy={}; state.chordSegs=null; state.beats=(meta&&meta.beats)||null; state.bars=(meta&&meta.bars)||null; state.meta=meta||null;
+    state.arr='four'; state.chordNotes=null; state.chordNotesBy={}; state.chordSegs=null; state.sopAdv=null; state.beats=(meta&&meta.beats)||null; state.bars=(meta&&meta.bars)||null; state.meta=meta||null;
     state.allNotes=notes; state.notes=notes; state.duration=duration; state.midiLoaded=true;
     buildVoiceBar(notes, names);
     applyHandVoicing();
@@ -1505,6 +1505,7 @@ function buildVoiceBar(notes, names){
         mkA('four','🎹 4 vozes (órgão)','Soprano, contralto, tenor e baixo, com som de órgão');
         mkA('chords','🎶 Melodia + acordes (piano)','Mão direita: soprano · Mão esquerda: acordes calculados da partitura');
         mkA('arp','🎼 Melodia + arpejo (piano)','Mão direita: soprano · Mão esquerda: arpejo (baixo Alberti, dedilhado aberto ou arpejo lento, conforme o compasso)');
+        mkA('arp2','✨ Melodia + arpejo avançado (piano)','Mão direita: soprano com passagens em fins de frase · Mão esquerda: arpejo largo com passagens ligando um acorde ao outro');
         const sep=document.createElement('span'); sep.className='arr-sep'; ac.appendChild(sep);
     }
     const mk=(label,color,cls,fn,title)=>{
@@ -1704,17 +1705,138 @@ function buildChordNotes(segs,arp){
     });
     return out;
 }
+// ======================== ARPEJO AVANÇADO ========================
+// Mão esquerda: arpejo em "onda" (fundamental · quinta · oitava · décima), com PASSAGENS diatônicas que levam
+// de um acorde ao seguinte (ex.: de Sol para Mi menor passa por Fá♯) e nota de preparação antes da troca.
+// Mão direita: o soprano continua igual, mas em poucos lugares — nota longa de fim de frase seguida da próxima
+// nota —  as últimas colcheias da nota longa viram uma passagem ligando uma nota à outra.
+const ADV_MAJOR=[0,2,4,5,7,9,11];
+function advTonicPc(){
+    const f=state.meta&&state.meta.fifths;
+    if(typeof f==='number') return (((f*7)%12)+12)%12;
+    const w=new Array(12).fill(0); (state.allNotes||[]).forEach(n=>{ w[(((n.midi0!==undefined?n.midi0:n.midi)%12)+12)%12]+=n.endTime-n.startTime; });
+    let best=0,bs=-1; for(let t=0;t<12;t++){ let s=0; ADV_MAJOR.forEach(i=>{ s+=w[(t+i)%12]; }); if(s>bs){ bs=s; best=t; } }
+    return best;
+}
+function advScale(){
+    const t=advTonicPc(), sc=[];
+    for(let m=24;m<=100;m++) if(ADV_MAJOR.includes(((m-t)%12+12)%12)) sc.push(m);
+    return sc;
+}
+function advSnap(sc,m){ let bi=0,bd=1e9; sc.forEach((x,i)=>{ const d=Math.abs(x-m); if(d<bd){ bd=d; bi=i; } }); return bi; }
+function advTools(){
+    const beats=state.beats||[], bars=state.bars||[], bi=state.meta&&state.meta.barInfo, qOf=(state.meta&&state.meta.qOfSec)||null;
+    const beatLenAt=t=>{ let k=0; while(k<beats.length-2&&beats[k+1]<=t+1e-3) k++; return beats.length>1?Math.max(0.15,beats[k+1]-beats[k]):0.6; };
+    const bpbAt=t=>{ if(!bars.length||!beats.length) return 4; let b=0; while(b+1<bars.length&&bars[b+1]<=t+1e-3) b++;
+        const e=b+1<bars.length?bars[b+1]:Infinity; const n=beats.filter(x=>x>=bars[b]-1e-3&&x<e-1e-3).length; return n||4; };
+    const tsAt=t=>{ if(!bi||!qOf) return null; const q=qOf(t); let i=bi.length-1; while(i>0&&bi[i].q>q+1e-6) i--; return bi[i].ts; };
+    return {beatLenAt,bpbAt,tsAt};
+}
+function buildAdvancedAccompaniment(segs){
+    const out=[], SC=advScale(), tl=advTools(), COMP=['6/8','9/8','12/8'];
+    // 1) fundamental de cada acorde (mesma escolha do arpejo normal: oitava mais próxima do acorde anterior)
+    const roots=new Map(); let prevRoot=null;
+    segs.forEach(g=>{
+        if(g.solo) return;
+        let root=40+(((g.r-40)%12)+12)%12;
+        if(prevRoot!==null){ [root-12,root,root+12].forEach(c=>{ if(c>=38&&c<=52&&Math.abs(c-prevRoot)<Math.abs(root-prevRoot)) root=c; }); }
+        prevRoot=root; roots.set(g,root);
+    });
+    const fold=m=>{ while(m>64) m-=12; return m; };
+    segs.forEach((g,gi)=>{
+        if(g.solo){
+            g.notes.forEach(n=>{ const m=(n.midi0!==undefined?n.midi0:n.midi), e=Math.max(n.startTime+0.05,n.endTime-0.03), d=e-n.startTime;
+                out.push({midi:m,startTime:n.startTime,endTime:e,duration:d,velocity:0.75,track:99,color:'#ff7043',chord:g.name});
+                out.push({midi:m+12,startTime:n.startTime,endTime:e,duration:d,velocity:0.6,track:99,color:'#ff7043',chord:g.name}); });
+            return;
+        }
+        const R=roots.get(g), iv=g.T.iv, Th=iv[1], F=iv[2], sev=g.T.sev;
+        const bl=tl.beatLenAt(g.a), len=g.b-g.a, ts=tl.tsAt(g.a), bpb=tl.bpbAt(g.a);
+        const compound=ts?COMP.includes(ts):(bpb>=6&&bpb%3===0);
+        const slot=(bl<0.38&&!compound)?bl:bl/2;
+        const n=Math.round(len/slot);
+        const mid=sev!==undefined?sev:12;
+        // acorde curto demais para arpejar: acorde em bloco
+        if(n<3){
+            [R,R+Th,R+F].forEach((m,i)=>out.push({midi:m,startTime:g.a,endTime:g.b-0.03,duration:Math.max(0.05,len-0.03),velocity:i===0?0.7:0.55,track:99,color:'#ffa500',chord:g.name}));
+            return;
+        }
+        // 2) padrão do arpejo (deslocamentos em semitons a partir da fundamental)
+        let pat;
+        if(compound){
+            const A=[0,F,12], B=[12+Th,mid===12?12:mid,F];
+            const groups=Math.max(1,Math.round(n/3)); pat=[]; for(let i=0;i<groups;i++) pat=pat.concat(i%2===0?A:B);
+        } else if(bpb===3||ts==='3/4'||ts==='3/2'){ pat=[0,F,mid,12+Th,mid,F]; }
+        else if(bpb===2||ts==='2/4'){ pat=[0,F,12,F]; }
+        else if(slot===bl){ pat=[0,F,12,F]; }
+        else { pat=[0,F,mid,12+Th,mid,F,Th,F]; }
+        const notes=[]; for(let i=0;i<n;i++) notes.push({m:fold(R+pat[i%pat.length]),walk:false});
+        // 3) passagem até o próximo acorde (só se ele vem logo em seguida e a fundamental muda)
+        let nx=null; for(let k=gi+1;k<segs.length;k++){ if(Math.abs(segs[k].a-g.b)<0.08){ nx=segs[k]; } break; }
+        if(nx&&!nx.solo&&roots.has(nx)&&nx.r!==g.r&&n>=4){
+            const R1=roots.get(nx), i0=advSnap(SC,R), i1=advSnap(SC,R1), d=i1-i0, sg=Math.sign(d);
+            let cnt=0; const walk=[];
+            if(Math.abs(d)>=2){
+                cnt=Math.min(Math.abs(d)-1,3,n-2);
+                for(let s=cnt;s>=1;s--) walk.push(SC[i1-sg*s]);
+            } else {
+                // raízes vizinhas: nota de preparação por meio-tom abaixo do próximo acorde (ou o grau acima)
+                walk.push(Math.abs(R-R1)<=2?R1-1:SC[Math.min(SC.length-1,i1+1)]); cnt=1;
+            }
+            walk.forEach((m,k)=>{ const si=n-cnt+k; if(si>=2) notes[si]={m:fold(m),walk:true}; });
+        }
+        // 4) notas
+        notes.forEach((x,i)=>{
+            const t0=g.a+i*slot, last=i===notes.length-1;
+            const e=last?g.b-0.03:Math.min(g.b-0.03,t0+slot*(x.walk?1.05:(i%pat.length===0?2.2:1.15)));
+            out.push({midi:x.m,startTime:t0,endTime:Math.max(t0+0.05,e),duration:Math.max(0.05,Math.max(t0+0.05,e)-t0),
+                velocity:i===0?0.72:(x.walk?0.58:(i%2===0?0.5:0.44)),track:99,color:x.walk?'#ffcc66':'#ffa500',chord:g.name});
+        });
+    });
+    return out;
+}
+// Soprano com poucas passagens: nota longa (≥ ~2 tempos) seguida da próxima nota, quase sem pausa
+function buildAdvancedSoprano(){
+    const idx=satbIdx(); if(!idx) return [];
+    const sop=state.allNotes.filter(n=>n.track===idx.S).sort((a,b)=>a.startTime-b.startTime).map(n=>Object.assign({},n));
+    const SC=advScale(), tl=advTools(), out=[]; let lastOrn=-1e9;
+    for(let k=0;k<sop.length;k++){
+        const n=sop[k], nx=sop[k+1], m0=(n.midi0!==undefined?n.midi0:n.midi);
+        out.push(n);
+        if(!nx||k===0) continue;
+        const bl=tl.beatLenAt(n.startTime), dur=n.endTime-n.startTime, slot=bl/2, gap=nx.startTime-n.endTime;
+        if(dur<1.9*bl-0.02||gap>0.5*bl||gap<-0.05) continue;
+        if(n.startTime-lastOrn<Math.max(8*bl,4*tl.bpbAt(n.startTime)*bl)) continue;   // no mínimo ~4 compassos entre uma passagem e outra
+        const i0=advSnap(SC,m0), mx=(nx.midi0!==undefined?nx.midi0:nx.midi), i1=advSnap(SC,mx);
+        if(SC[i0]!==m0) continue;
+        const d=i1-i0, sg=Math.sign(d), kmax=Math.floor((dur-bl)/slot+1e-6);
+        let orn=[];
+        if(Math.abs(d)>=2&&Math.abs(d)<=6){
+            const m=Math.min(Math.abs(d)-1,kmax,4); if(m<1) continue;
+            for(let s=m;s>=1;s--) orn.push(SC[i1-sg*s]);
+        } else if(Math.abs(d)<=1&&kmax>=2){
+            orn=[d===1?SC[i0-1]:SC[i0+1],m0];
+        } else continue;
+        const t0=n.endTime-orn.length*slot;
+        n.endTime=t0; n.duration=t0-n.startTime; delete n.eq;
+        orn.forEach((m,j)=>{ const s0=t0+j*slot, e0=(j===orn.length-1)?t0+orn.length*slot:s0+slot;
+            out.push({midi:m,startTime:s0,endTime:e0,duration:e0-s0,velocity:0.62,track:idx.S,color:n.color,orn:true}); });
+        lastOrn=n.startTime;
+    }
+    return out.sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
+}
 function setArrangement(k){
     const idx=satbIdx(); if(!idx) return;
     if(k==='four'){ setVoiceSel(state.voiceList.map(v=>v.track)); setInstrument('organ'); return; }
     if(!state.pro){ openProModal('Os modos "melodia + acordes" e "melodia + arpejo" (soprano na mão direita e acompanhamento na esquerda) são recursos Pro.'); return; }
     if(!state.chordSegs) state.chordSegs=analyzeChords();
     if(!state.chordNotesBy) state.chordNotesBy={};
-    if(!state.chordNotesBy[k]&&state.chordSegs) state.chordNotesBy[k]=buildChordNotes(state.chordSegs,k==='arp');
+    if(!state.chordNotesBy[k]&&state.chordSegs) state.chordNotesBy[k]=(k==='arp2')?buildAdvancedAccompaniment(state.chordSegs):buildChordNotes(state.chordSegs,k==='arp');
     state.chordNotes=state.chordNotesBy[k];
     if(!state.chordNotes||!state.chordNotes.length){ toast('Não foi possível calcular os acordes deste arquivo'); return; }
     state.arr=k; state.voiceSel=new Set([idx.S]); applyHandVoicing();
-    state.notes=state.allNotes.filter(n=>n.track===idx.S).concat(state.chordNotes).sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
+    const sopN=(k==='arp2')?(state.sopAdv||(state.sopAdv=buildAdvancedSoprano())):state.allNotes.filter(n=>n.track===idx.S);
+    state.notes=sopN.concat(state.chordNotes).sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
     state.totalNotes=state.notes.length; noteCountBadge.textContent=state.totalNotes+' notas';
     refreshVoiceBar(); setInstrument('piano');
     if(state.isPlaying){ const cp=state.currentTime; pausePlayback(); state.pausedAt=cp; startPlayback(); }
@@ -1743,7 +1865,7 @@ function setVoiceSel(list){
     if(state.isPlaying){ const cp=state.currentTime; pausePlayback(); state.pausedAt=cp; startPlayback(); }
     else { drawScene(); }
 }
-function isAcc(){ return state.arr==='chords'||state.arr==='arp'; }
+function isAcc(){ return state.arr==='chords'||state.arr==='arp'||state.arr==='arp2'; }
 function refreshVoiceBar(){
     const all=state.voiceList.length, allOn=state.voiceSel.size===all&&!isAcc();
     document.querySelectorAll('#voiceChips .voice-chip').forEach(b=>{
@@ -4365,17 +4487,18 @@ function pdfChordLabel(name,fifths){
     return n.replace(/^([A-G])b/,'$1♭').replace(/^([A-G])#/,'$1♯').replace('m7(b5)','m7(♭5)');
 }
 // melodia (soprano, mão direita) + acompanhamento (mão esquerda) com os nomes dos acordes
-function pdfAccompaniment(arp,meta,pref){
+function pdfAccompaniment(mode,meta,pref){
     const idx=satbIdx(); if(!idx) throw new Error('sem vozes');
     if(!state.chordSegs) state.chordSegs=analyzeChords();
     if(!state.chordNotesBy) state.chordNotesBy={};
-    const key=arp?'arp':'chords';
-    if(!state.chordNotesBy[key]&&state.chordSegs) state.chordNotesBy[key]=buildChordNotes(state.chordSegs,arp);
+    const key=mode;
+    if(!state.chordNotesBy[key]&&state.chordSegs) state.chordNotesBy[key]=(mode==='arp2')?buildAdvancedAccompaniment(state.chordSegs):buildChordNotes(state.chordSegs,mode==='arp');
     const cn=(state.chordNotesBy[key]||[]).slice().sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
     if(!cn.length) throw new Error('sem acordes');
     const ons=[...new Set(cn.map(n=>Math.round(n.startTime*1000)))].sort((a,b)=>a-b);
     const notes=[];
-    state.allNotes.filter(n=>n.track===idx.S).forEach(n=>notes.push(pdfNote(n,'R',meta,pref)));
+    const sopN=(mode==='arp2')?(state.sopAdv||(state.sopAdv=buildAdvancedSoprano())):state.allNotes.filter(n=>n.track===idx.S);
+    sopN.forEach(n=>notes.push(pdfNote(n,'R',meta,pref)));
     cn.forEach(n=>{
         const st=Math.round(n.startTime*1000), nx=ons.find(t=>t>st);
         let end=n.endTime+0.03; if(nx!==undefined) end=Math.min(end,nx/1000);
@@ -4425,6 +4548,7 @@ function openPdfModal(){
     if(satbIdx()&&state.beats&&state.beats.length>2){
         mk('pdfChords','🎶 Melodia + acordes','Soprano na mão direita e acordes na mão esquerda, com o nome do acorde acima da pauta.',false);
         mk('pdfArp','🎼 Melodia + arpejo','Soprano na mão direita e arpejo na mão esquerda, com o nome do acorde acima da pauta.',false);
+        mk('pdfArp2','✨ Melodia + arpejo avançado','Arpejo largo com passagens ligando um acorde ao outro; no soprano, passagens em alguns fins de frase.',false);
     }
     mk('pdfScore','📄 Partitura das vozes','Escolha abaixo quais vozes entram na partitura.',true);
     const vb=document.createElement('div'); vb.className='pdf-voices'; vb.id='pdfVoices';
@@ -4445,6 +4569,7 @@ async function pdfGenerate(){
     const want=[];
     if(on('pdfChords')) want.push('chords');
     if(on('pdfArp')) want.push('arp');
+    if(on('pdfArp2')) want.push('arp2');
     if(on('pdfScore')){ if(!tracks.length){ msg.style.color='#ff6b6b'; msg.textContent='Marque pelo menos uma voz para a partitura.'; return; } want.push('score'); }
     if(!want.length){ msg.style.color='#ff6b6b'; msg.textContent='Escolha pelo menos uma versão.'; return; }
     btn.disabled=true; msg.style.color=''; msg.textContent='Montando o PDF…';
@@ -4457,8 +4582,8 @@ async function pdfGenerate(){
                 part=pdfVoices(tracks,meta,pref);
                 sub='Partitura — '+state.voiceList.filter(v=>tracks.includes(v.track)).map(v=>v.name).join(', ');
             } else {
-                part=pdfAccompaniment(w==='arp',meta,pref);
-                sub=w==='arp'?'Melodia + arpejo':'Melodia + acordes';
+                part=pdfAccompaniment(w,meta,pref);
+                sub=w==='arp2'?'Melodia + arpejo avançado':w==='arp'?'Melodia + arpejo':'Melodia + acordes';
             }
             msg.textContent='Desenhando: '+sub+'…';
             await new Promise(r=>setTimeout(r,30));
@@ -4467,7 +4592,7 @@ async function pdfGenerate(){
             for(const svg of sc.svgs) pages.push(await PB.svgToJpeg(svg,sc.W,sc.H,2.6));
         }
         const base=title.replace(/[\\/:*?"<>|]+/g,'').trim()||'partitura';
-        const suf=want.length===1?({chords:' - acordes',arp:' - arpejo',score:' - partitura'})[want[0]]:'';
+        const suf=want.length===1?({chords:' - acordes',arp:' - arpejo',arp2:' - arpejo avancado',score:' - partitura'})[want[0]]:'';
         await tbSaveFile(base+suf+'.pdf',PB.makePdf(pages));
         hideModal('mPdf'); toast('PDF gerado ('+pages.length+' página'+(pages.length>1?'s':'')+')','success');
     }catch(e){
