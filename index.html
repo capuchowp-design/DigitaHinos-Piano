@@ -1229,7 +1229,7 @@ const state={
     pausedAt:0,
     sampler:null, samplerReady:false, piano:null, synth:null, organ:null, instrument:'piano',
     midiLoaded:false, allNotes:[], voiceList:[], voiceSel:new Set(),
-    pro:false, source:'file', preview:false, currentHymn:null,
+    pro:true, source:'file', preview:false, currentHymn:null,
     pps:200  // pixels per second
 };
 
@@ -4065,7 +4065,7 @@ window.__pb={parseScoreFile,pbBuildScore,renderWav,wavBlob,makePdf,svgToJpeg,sna
 // Grátis: prévia dos hinos, velocidade 1x e todas as vozes juntas.
 // Pro: hinos completos, velocidade livre e escolha de voz (soprano / contralto / tenor / baixo).
 const PRO_SALT='nb-pro-05e53ddd2ebcd9c6';          // o gerador de códigos (scripts/gerar_codigos_pro.py) lê este valor
-const PRO_SERVER='https://script.google.com/macros/s/AKfycbwdhbksARuAYqeyKCLZlhjghzCi8YCZS5gQtHhpZLHCb6FuPIYOA7eDb8FHp0WBrmBk3g/exec';   // endereço do servidor de licenças (Apps Script, termina em /exec). Veja servidor/LEIA-ME.txt
+const PRO_SERVER='';   // endereço do servidor de licenças (Apps Script, termina em /exec). Veja servidor/LEIA-ME.txt
                        // Vazio = modo simples: o código só é conferido no próprio app (sem travar em 1 aparelho).
 const PRO_PREVIEW_SECONDS=30;                         // tamanho da prévia grátis de cada hino
 const PRO_INFO={
@@ -4203,7 +4203,7 @@ let hymnIndex=null;
 const hnNorm=t=>String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 async function openHinos(){
     showModal('mHinos');
-    document.getElementById('hnHint').textContent=state.pro?'Versão Pro: hinos completos.':'Grátis: prévia de '+PRO_PREVIEW_SECONDS+' s de cada hino. Versão Pro libera o hino completo, velocidade e vozes.';
+    document.getElementById('hnHint').textContent='';
     if(!hymnIndex){
         hymnIndex=HYMN_INDEX;
         hymnIndex.forEach(h=>{ h._k=hnNorm(String(h.n).padStart(3,'0')+' '+h.title+' '+h.author); });
@@ -4254,12 +4254,10 @@ async function loadHymn(h){
     loadingOverlay.classList.remove('active');
 }
 
-// ativação guardada neste aparelho
+// versão Pro removida: tudo liberado
 (function(){
-    const l=licLoad();
-    if(l&&proValid(l.code)){ state.pro=true; refreshProUI(); proVerify(); }
-    else { state.pro=false; refreshProUI(); if(PRO_SERVER) proRestore(true); }
-    window.addEventListener('online',()=>{ if(!state.pro&&PRO_SERVER) proRestore(true); else proVerify(); });
+    state.pro=true; refreshProUI();
+    const b=document.getElementById('btnPro'); if(b) b.style.display='none';
 })();
 
 </script>
