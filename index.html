@@ -1747,9 +1747,12 @@ function buildAdvancedAccompaniment(segs){
     const sopL=state.sopAdv||(state.sopAdv=buildAdvancedSoprano());
     const melAt=(t0,t1)=>sopL.filter(n=>n.startTime<t1-1e-3&&n.endTime>t0+1e-3).map(n=>n.midi);
     const clash=(tones,mel)=>mel.some(sm=>tones.some(c=>{ const d=((sm-c)%12+12)%12; return d===1||d===11; }));
-    // passo da passagem: acorde diatônico sobre o grau (tríade) se casar com a melodia; senão tônicas em oitava; senão só a nota
+    const SCPC=new Set(SC.map(x=>x%12)); let extElig=0, walkAlt=0;
+    // passo da passagem: acorde diatônico sobre o grau se casar com a melodia — de vez em quando mais cheio, com sétima e a terça
+    // uma oitava acima (voicing aberto); senão tríade; senão tônicas em oitava; senão só a nota
     const walkStep=(m,t0,t1)=>{
         const mel=melAt(t0,t1), i=SC.indexOf(m);
+        if(i>=0&&i+9<SC.length&&(walkAlt++%2===0)){ const f4=[m,SC[i+4],SC[i+6],SC[i+2]+12]; if(f4[3]<=66&&!clash(f4,mel)) return f4; }
         if(i>=0&&i+4<SC.length){ const tr=[m,SC[i+2],SC[i+4]]; if(tr[2]<=64&&!clash(tr,mel)) return tr; }
         const oc=[m,m+12]; if(m+12<=66&&!clash(oc,mel)) return oc;
         return [m];
@@ -1783,7 +1786,27 @@ function buildAdvancedAccompaniment(segs){
         else if(bpb===2||ts==='2/4'){ pat=[0,F,12,F]; }
         else if(slot===bl){ pat=[0,F,12,F]; }
         else { pat=[0,F,mid,12+Th,mid,F,Th,F]; }
-        const notes=[]; for(let i=0;i<n;i++) notes.push({m:fold(R+pat[i%pat.length]),walk:false});
+        // extensões (sétima, nona, décima primeira): só em trechos longos, notas da escala e sem meio-tom contra a melodia;
+        // o arpejo fica mais cheio, com as notas preenchendo o espaço entre a fundamental e a décima
+        let ext=null;
+        if(n>=4&&!['°','m7(b5)','+'].includes(g.T.suf)){
+            const melG=melAt(g.a,g.b), okTone=o=>SCPC.has(((R+o)%12+12)%12)&&!melG.some(sm=>{ const d=(((sm-(R+o))%12)+12)%12; return d===1||d===11; });
+            const minor=g.T.suf==='m'||g.T.suf==='m7';
+            let S2=sev;
+            if(S2===undefined) S2=minor?10:(okTone(11)?11:10);
+            if(!okTone(S2)) S2=undefined;
+            let N=okTone(14)?14:undefined;
+            if(minor&&okTone(17)&&(N===undefined||extElig%2===1)) N=17;
+            if((S2!==undefined||N!==undefined)&&(extElig++%2===0)) ext={S:S2===undefined?12:S2,N:N===undefined?(S2===undefined?12:S2+12):N};
+        }
+        if(ext){
+            const S2=ext.S, N=ext.N;
+            if(compound){ pat=[]; const groups=Math.max(1,Math.round(n/3)); for(let i=0;i<groups;i++) pat=pat.concat(i%2===0?[0,F,S2]:[N,S2,F]); }
+            else if(bpb===3||ts==='3/4'||ts==='3/2') pat=[0,F,S2,N,S2,F];
+            else if(bpb===2||ts==='2/4'||slot===bl) pat=[0,F,S2,N];
+            else pat=[0,F,S2,N,12+Th,N,S2,F];
+        }
+        const notes=[]; for(let i=0;i<n;i++) notes.push({m:fold(R+pat[i%pat.length]),walk:false,ext:!!ext});
         // 3) passagem até o próximo acorde (só se ele vem logo em seguida e a fundamental muda)
         let nx=null; for(let k=gi+1;k<segs.length;k++){ if(Math.abs(segs[k].a-g.b)<0.08){ nx=segs[k]; } break; }
         if(nx&&!nx.solo&&roots.has(nx)&&nx.r!==g.r&&n>=4){
@@ -1804,7 +1827,7 @@ function buildAdvancedAccompaniment(segs){
             const e=last?g.b-0.03:Math.min(g.b-0.03,t0+slot*(x.walk?1.05:(i%pat.length===0?2.2:1.15)));
             const ee=Math.max(t0+0.05,e);
             out.push({midi:x.m,startTime:t0,endTime:ee,duration:Math.max(0.05,ee-t0),
-                velocity:i===0?0.72:(x.walk?0.6:(i%2===0?0.5:0.44)),track:99,color:x.walk?'#ffcc66':'#ffa500',chord:g.name});
+                velocity:i===0?0.72:(x.walk?0.6:(i%2===0?0.5:0.44)),track:99,color:x.walk?'#ffcc66':(x.ext?'#ffb347':'#ffa500'),chord:g.name});
             (x.extra||[]).forEach(m2=>out.push({midi:m2,startTime:t0,endTime:ee,duration:Math.max(0.05,ee-t0),velocity:0.5,track:99,color:'#ffcc66',chord:g.name}));
         });
     });
