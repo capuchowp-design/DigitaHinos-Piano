@@ -1749,11 +1749,13 @@ function buildAdvancedAccompaniment(segs){
     const clash=(tones,mel)=>mel.some(sm=>tones.some(c=>{ const d=((sm-c)%12+12)%12; return d===1||d===11; }));
     const SCPC=new Set(SC.map(x=>x%12)); let extElig=0, walkAlt=0;
     // passo da passagem: acorde diatônico sobre o grau se casar com a melodia — de vez em quando mais cheio, com sétima e a terça
-    // uma oitava acima (voicing aberto); senão tríade; senão tônicas em oitava; senão só a nota
+    // fechado e dentro de uma oitava; senão tríade; senão tônicas em oitava; senão só a nota
+    // Notas tocadas juntas (seguradas) nunca passam de uma oitava (12 semitons): é o alcance confortável da mão esquerda.
+    const spanOK=t=>t[t.length-1]-t[0]<=12;
     const walkStep=(m,t0,t1)=>{
         const mel=melAt(t0,t1), i=SC.indexOf(m);
-        if(i>=0&&i+9<SC.length&&(walkAlt++%2===0)){ const f4=[m,SC[i+4],SC[i+6],SC[i+2]+12]; if(f4[3]<=66&&!clash(f4,mel)) return f4; }
-        if(i>=0&&i+4<SC.length){ const tr=[m,SC[i+2],SC[i+4]]; if(tr[2]<=64&&!clash(tr,mel)) return tr; }
+        if(i>=0&&i+6<SC.length&&(walkAlt++%2===0)){ const f4=[m,SC[i+2],SC[i+4],SC[i+6]]; if(spanOK(f4)&&f4[3]<=66&&!clash(f4,mel)) return f4; }   // acorde de 4 notas, fechado
+        if(i>=0&&i+4<SC.length){ const tr=[m,SC[i+2],SC[i+4]]; if(spanOK(tr)&&tr[2]<=64&&!clash(tr,mel)) return tr; }
         const oc=[m,m+12]; if(m+12<=66&&!clash(oc,mel)) return oc;
         return [m];
     };
@@ -1890,6 +1892,7 @@ function setArrangement(k){
     const sopN=(k==='arp2')?(state.sopAdv||(state.sopAdv=buildAdvancedSoprano())):state.allNotes.filter(n=>n.track===idx.S);
     state.notes=sopN.concat(state.chordNotes).sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
     state.totalNotes=state.notes.length; noteCountBadge.textContent=state.totalNotes+' notas';
+    fitKeyRange();
     refreshVoiceBar(); setInstrument('piano');
     if(state.isPlaying){ const cp=state.currentTime; pausePlayback(); state.pausedAt=cp; startPlayback(); }
     else { drawScene(); }
@@ -1914,6 +1917,7 @@ function setVoiceSel(list){
     state.notes=state.allNotes.filter(n=>state.voiceSel.has(n.track||0));
     state.totalNotes=state.notes.length;
     noteCountBadge.textContent=state.totalNotes+' notas';
+    fitKeyRange();
     if(state.isPlaying){ const cp=state.currentTime; pausePlayback(); state.pausedAt=cp; startPlayback(); }
     else { drawScene(); }
 }
@@ -1938,6 +1942,14 @@ function refreshVoiceBar(){
     const cb=document.getElementById('chordBadge'); if(cb){ cb.hidden=!isAcc(); updateChordBadge(); }
 }
 
+// Ajusta o teclado e a tela às notas que estão tocando de verdade (vozes escolhidas, acordes e arpejos), sempre com folga
+function fitKeyRange(){
+    const ns=state.notes; if(!ns||!ns.length) return false;
+    let mn=127,mx=0; ns.forEach(n=>{ if(n.midi<mn) mn=n.midi; if(n.midi>mx) mx=n.midi; });
+    const lo=Math.max(21,mn-3), hi=Math.min(108,mx+3);
+    if(lo===state.lowestNote&&hi===state.highestNote) return false;
+    state.lowestNote=lo; state.highestNote=hi; buildPianoKeys(); return true;
+}
 function buildPianoKeys(){
     state.pianoKeys=[];
     for(let m=state.lowestNote;m<=state.highestNote;m++)
