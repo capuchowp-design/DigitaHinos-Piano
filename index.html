@@ -393,6 +393,11 @@
         .pb-chk { display:flex; align-items:center; gap:7px; font-size:13px; margin-top:8px; }
         .pb-paper { background:#fff; margin:0 auto 14px; max-width:820px; box-shadow:0 2px 14px rgba(0,0,0,.35); line-height:0; }
         .pb-paper svg { width:100%; height:auto; display:block; }
+        .pdf-opt { display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--border-btn); border-radius:10px; background:var(--bg-btn); margin-bottom:8px; cursor:pointer; font-size:14px; font-weight:700; }
+        .pdf-opt input { margin-top:3px; width:18px; height:18px; flex:none; }
+        .pdf-opt small { display:block; font-weight:400; font-size:11px; color:var(--text-muted); }
+        .pdf-voices { display:flex; flex-wrap:wrap; gap:8px 16px; margin:-2px 0 10px 30px; font-size:13px; }
+        .pdf-voices label { display:flex; gap:6px; align-items:center; cursor:pointer; }
         .pb-msg { color:var(--text-muted); text-align:center; padding:40px 12px; font-size:14px; }
         @media(max-width:480px){ .score-toolbar{gap:5px 6px;padding:6px 8px;} .score-toolbar .score-action-btn{padding:5px 8px;font-size:11px;} .pb-name{max-width:120px;} }
         #scBody { background:#8a8794; }
@@ -444,6 +449,7 @@
         </button>
         <button class="tab-btn" id="btnHinos" title="Hinário">🎵 <span>Hinos</span></button>
         <button class="tab-btn" id="btnPro" title="Versão Pro">⭐ <span id="proLabel">Pro</span></button>
+        <button class="tab-btn" id="btnPdf" title="Gerar PDF (acordes, arpejo ou partitura)">📄 <span>PDF</span></button>
         <div class="synth-badge" id="synthBadge"><span class="dot"></span>Carregando…</div>
         <span class="file-name" id="fileName"></span>
         <button class="theme-btn" id="themeBtn" title="Alternar modo claro/escuro">🌙</button>
@@ -818,6 +824,18 @@
   </div>
 </div>
 
+<div class="pb-modal" id="mPdf" hidden>
+  <div class="pb-sheet">
+    <div class="pb-head"><h2>📄 Gerar PDF</h2><button class="pb-x" data-close>✕</button></div>
+    <div class="pb-body">
+      <div class="pb-fine" id="pdfInfo" style="margin:0 0 10px;font-weight:600;color:var(--text-main)"></div>
+      <div id="pdfChoices"></div>
+      <div class="pb-fine" id="pdfMsg" style="min-height:16px"></div>
+      <div class="pb-row" style="margin-top:8px"><button class="score-action-btn primary" id="pdfGo">⬇ Gerar PDF</button><button class="score-action-btn secondary" data-close>Cancelar</button></div>
+    </div>
+  </div>
+</div>
+
 <div class="error-toast" id="errorToast"></div>
 <div class="success-toast" id="successToast"></div>
 
@@ -1084,6 +1102,7 @@ async function parseMusicXmlFile(buf){
         partNames[sp.getAttribute('id')]=mxlTxt(mxlKid(sp,'part-name'))||mxlTxt(mxlKid(sp,'part-abbreviation'));
     });
     const parts=mxlKids(rootEl,'part'), raw=[], tempos=[], bars=[];
+    let fifths0=null, tsCur='4/4';
     const STEP={C:0,D:2,E:4,F:5,G:7,A:9,B:11};
 
     parts.forEach((part,pi)=>{
@@ -1096,7 +1115,12 @@ async function parseMusicXmlFile(buf){
             const m=ms[mi]; let D=divAt[mi], pos=0, maxPos=0, lastStart=0;
             for(const el of Array.from(m.children)){
                 const ln=el.localName;
-                if(ln==='attributes'){ const d=mxlKid(el,'divisions'); if(d&&+mxlTxt(d)>0) D=+mxlTxt(d); }
+                if(ln==='attributes'){ const d=mxlKid(el,'divisions'); if(d&&+mxlTxt(d)>0) D=+mxlTxt(d);
+                    if(pi===0){
+                        const kk=mxlKid(el,'key'), ff=kk&&mxlKid(kk,'fifths'); if(ff&&fifths0===null) fifths0=parseInt(mxlTxt(ff))||0;
+                        const tm=mxlKid(el,'time'); if(tm){ const tb=parseInt(mxlTxt(mxlKid(tm,'beats'))), tt=parseInt(mxlTxt(mxlKid(tm,'beat-type'))); if(tb>0&&tt>0) tsCur=tb+'/'+tt; }
+                    }
+                }
                 else if(ln==='direction'||ln==='sound'){
                     const snd=ln==='sound'?el:mxlKid(el,'sound'), tp=snd&&parseFloat(snd.getAttribute('tempo'));
                     if(tp>0) tempos.push({beat:t+pos/D,bpm:tp});
@@ -1111,18 +1135,19 @@ async function parseMusicXmlFile(buf){
                     if(mxlKid(el,'rest')||mxlKid(el,'cue')) continue;
                     const pitch=mxlKid(el,'pitch'); if(!pitch) continue;
                     const step=STEP[mxlTxt(mxlKid(pitch,'step')).toUpperCase()]; if(step===undefined) continue;
-                    const midi=(parseInt(mxlTxt(mxlKid(pitch,'octave')))+1)*12+step+Math.round(parseFloat(mxlTxt(mxlKid(pitch,'alter')))||0);
+                    const alt=Math.round(parseFloat(mxlTxt(mxlKid(pitch,'alter')))||0);
+                    const midi=(parseInt(mxlTxt(mxlKid(pitch,'octave')))+1)*12+step+alt;
                     if(!(midi>=0&&midi<=127)||!(dur>0)) continue;
                     const staff=parseInt(mxlTxt(mxlKid(el,'staff')))||1, voice=mxlTxt(mxlKid(el,'voice'))||'1';
                     const sQ=t+start/D, eQ=sQ+dur/D;
                     const ties=mxlKids(el,'tie').map(x=>x.getAttribute('type'));
                     const key=pi+'|'+staff+'|'+voice+'|'+midi, p=pend.get(key); let nt;
                     if(ties.includes('stop')&&p&&Math.abs(p.e-sQ)<1e-3){ p.e=eQ; nt=p; }
-                    else { nt={part:pi,staff,voice,midi,s:sQ,e:eQ,stem:mxlTxt(mxlKid(el,'stem'))}; raw.push(nt); }
+                    else { nt={part:pi,staff,voice,midi,s:sQ,e:eQ,stem:mxlTxt(mxlKid(el,'stem')),alt}; raw.push(nt); }
                     if(ties.includes('start')) pend.set(key,nt); else pend.delete(key);
                 }
             }
-            if(pi===0) bars.push({q:t,len:maxPos/D});
+            if(pi===0) bars.push({q:t,len:maxPos/D,ts:tsCur});
             t+=maxPos/D;
         }
     });
@@ -1202,7 +1227,7 @@ async function parseMusicXmlFile(buf){
         L.notes.forEach(n=>{
             const st=secOf(n.s), en=secOf(n.e), k=n.midi+'@'+st.toFixed(4);
             if(seen.has(k)||en-st<=0.005) return; seen.add(k);
-            notes.push({midi:n.midi,startTime:st,endTime:en,duration:en-st,velocity:0.8,track:ti,color});
+            notes.push({midi:n.midi,startTime:st,endTime:en,duration:en-st,velocity:0.8,track:ti,color,sq:n.s,eq:n.e,acc:(n.alt===1||n.alt===-1)?n.alt:0});
         });
     });
     notes.sort((a,b)=>a.startTime-b.startTime);
@@ -1210,7 +1235,9 @@ async function parseMusicXmlFile(buf){
     const beatSecs=[], barSecs=[];
     bars.filter(b=>b.len>1e-6).forEach(b=>{ barSecs.push(secOf(b.q)); for(let k=0;k<Math.ceil(b.len-1e-6);k++) beatSecs.push(secOf(b.q+k)); });
     if(bars.length){ const lb=bars[bars.length-1]; beatSecs.push(secOf(lb.q+lb.len)); }
-    return {notes,duration:Math.max(...notes.map(n=>n.endTime)),bpm:segs[0].bpm,names:nmap,voiceCount:lines.length,beats:beatSecs,bars:barSecs};
+    const qOfSec=sec=>{ let i=segs.length-1; while(i>0&&segs[i].sec>sec+1e-9) i--; return segs[i].beat+(sec-segs[i].sec)*segs[i].bpm/60; };
+    return {notes,duration:Math.max(...notes.map(n=>n.endTime)),bpm:segs[0].bpm,names:nmap,voiceCount:lines.length,beats:beatSecs,bars:barSecs,
+        fifths:fifths0||0,barInfo:bars.filter(b=>b.len>1e-6),qOfSec};
 }
 
 // Abre qualquer formato suportado (MIDI, MusicXML, MXL) pelo conteúdo do arquivo.
@@ -1443,7 +1470,7 @@ function loadMidiFile(file){
 
 async function applyNotes(notes, duration, names, meta){
     notes.forEach(n=>{ if(!n.color) n.color=gc(n.track||0); });
-    state.arr='four'; state.chordNotes=null; state.chordNotesBy={}; state.chordSegs=null; state.beats=(meta&&meta.beats)||null; state.bars=(meta&&meta.bars)||null;
+    state.arr='four'; state.chordNotes=null; state.chordNotesBy={}; state.chordSegs=null; state.beats=(meta&&meta.beats)||null; state.bars=(meta&&meta.bars)||null; state.meta=meta||null;
     state.allNotes=notes; state.notes=notes; state.duration=duration; state.midiLoaded=true;
     buildVoiceBar(notes, names);
     applyHandVoicing();
@@ -3167,11 +3194,12 @@ function pbEl(parent,tag,attrs,txt){
     parent.appendChild(e); return e;
 }
 const PB_DURS=[32,24,16,12,8,6,4,3,2,1];               // em fusas (1/32); 1 tempo (semínima) = 8
-const PB_MEASURE={'4/4':32,'3/4':24,'2/4':16,'6/8':24};
+const PB_MEASURE={'4/4':32,'3/4':24,'2/4':16,'6/8':24,'2/2':32,'3/2':48,'6/4':48,'9/4':72,'9/8':36,'12/8':48,'5/4':40};
+const PB_COMPOUND=new Set(['6/8','9/8','12/8']);
 // posição permitida de cada valor dentro do compasso
 function pbOkPos(p,d,ts){
-    if(ts==='6/8'){
-        if(d===24) return p===0;
+    if(PB_COMPOUND.has(ts)){
+        if(d===24) return p%24===0;
         if(d===16) return false;
         if(d===12) return p%12===0;
         if(d===8)  return p%4===0 && (p%12)+8<=12;
@@ -3182,9 +3210,10 @@ function pbOkPos(p,d,ts){
         return true;
     }
     switch(d){
-        case 32: case 24: return p===0;
+        case 32: return p%32===0;
+        case 24: return p%24===0;
         case 16: return p%16===0;
-        case 12: return p===0||p===16;
+        case 12: return p%16===0;
         case 8:  return p%8===0;
         case 6:  return p%8===0;
         case 4:  return p%4===0;
@@ -3217,15 +3246,17 @@ const pbFlags=len=>len>=8?0:len>=4?1:len>=2?2:3;
 const pbDotted=len=>len===24||len===12||len===6||len===3;
 
 /* ---------- eventos de cada pauta ---------- */
-function pbStaffEvents(list,M,ts,total){
+function pbStaffEvents(list,mt,total){
     const cuts=new Set([0,total]);
-    for(let m=M;m<total;m+=M) cuts.add(m);
+    mt.forEach(m=>{ if(m.s<total) cuts.add(m.s); });
     list.forEach(x=>{ cuts.add(x.u); cuts.add(x.e); });
-    const pts=[...cuts].sort((a,b)=>a-b), ev=[];
+    const pts=[...cuts].sort((a,b)=>a-b), ev=[]; let mi=0;
     for(let k=0;k<pts.length-1;k++){
         const a=pts[k], b=pts[k+1];
+        while(mi+1<mt.length&&mt[mi+1].s<=a) mi++;
+        const M0=mt[mi], off=M0.off||0;
         const act=list.filter(x=>x.u<=a&&x.e>=b);
-        const parts=pbSplit(a%M,b-a,ts);
+        const parts=(!act.length&&a===M0.s&&b-a===M0.len&&!off)?[b-a]:pbSplit(a-M0.s+off,b-a,M0.ts);
         let pos=a;
         parts.forEach((len,pi)=>{
             const last=pi===parts.length-1;
@@ -3235,7 +3266,7 @@ function pbStaffEvents(list,M,ts,total){
                 tieIn:   pi>0 || x.u<a || (x.tied && list.some(y=>y!==x&&y.midi===x.midi&&y.e===a&&y.tied)),
                 show:null, disp:0
             })).sort((p,q)=>p.d-q.d);
-            ev.push({pos,len,rest:!notes.length,notes,m:Math.floor(pos/M),pim:pos%M,arts:new Set(act.flatMap(x=>x.arts))});
+            ev.push({pos,len,rest:!notes.length,notes,m:mi,pim:pos-M0.s+off,arts:new Set(act.flatMap(x=>x.arts))});
             pos+=len;
         });
     }
@@ -3245,23 +3276,46 @@ function pbStaffEvents(list,M,ts,total){
 /* ---------- montagem das páginas ---------- */
 function pbBuildScore(opts){
     opts=opts||{};
-    const ts=document.getElementById('scoreTimeSig').value||'4/4', M=PB_MEASURE[ts]||32, beatU=ts==='6/8'?12:8;
-    const bpm=parseInt(document.getElementById('scoreBpm').value)||120;
+    const ts=opts.ts||document.getElementById('scoreTimeSig').value||'4/4', M=PB_MEASURE[ts]||32;
+    const bpm=opts.bpm||parseInt(document.getElementById('scoreBpm').value)||120;
     const layout=opts.layout||'grand', title=(opts.title||'').trim();
-    const notes=scoreNotes.map((n,i)=>{
+    const notes=(opts.notes||scoreNotes).map((n,i)=>{
         const sp=pbSpell(n), u=Math.max(0,Math.round((n.beat-1)*8));
         let e=Math.round((n.beat-1+n.duration)*8); if(e<=u) e=u+1;
         return {n,i,u,e,l:sp.l,a:sp.a,o:sp.o,d:sp.o*7+sp.l,midi:n.midi,tied:!!n.tied,arts:n.articulations||[]};
     });
     if(!notes.length) throw new Error('vazio');
-    const end=Math.max(...notes.map(x=>x.e)), nM=Math.max(1,Math.ceil(end/M)), total=nM*M;
+    const end=Math.max(...notes.map(x=>x.e));
+    // tabela de compassos (início, tamanho e fórmula de cada um); sem opts.measures todos têm o mesmo tamanho
+    const mt=[]; let tot=0;
+    if(opts.measures&&opts.measures.length){
+        opts.measures.forEach((m,i)=>{
+            const full=PB_MEASURE[m.ts]||m.len;
+            mt.push({s:tot,len:m.len,ts:m.ts,bu:PB_COMPOUND.has(m.ts)?12:8,off:(i===0&&opts.pickup&&m.len<full)?full-m.len:0});
+            tot+=m.len;
+        });
+        const ref=mt[Math.min(1,mt.length-1)];
+        while(tot<end){ mt.push({s:tot,len:ref.len,ts:ref.ts,bu:ref.bu,off:0}); tot+=ref.len; }
+    } else {
+        const nM0=Math.max(1,Math.ceil(end/M));
+        for(let i=0;i<nM0;i++) mt.push({s:i*M,len:M,ts,bu:PB_COMPOUND.has(ts)?12:8,off:0});
+        tot=nM0*M;
+    }
+    const nM=mt.length, total=tot;
+    // armadura de clave (número de sustenidos > 0 ou bemóis < 0)
+    const fifths=Math.max(-7,Math.min(7,(opts.fifths|0)));
+    const KS_SH=[3,0,4,1,5,2,6], KS_FL=[6,2,5,1,4,0,3];
+    const keyAcc={}; for(let i=0;i<Math.abs(fifths);i++) keyAcc[(fifths>0?KS_SH:KS_FL)[i]]=fifths>0?1:-1;
+    const keyW=fifths?Math.abs(fifths)*9+8:0;
+    const KS_POS={treble:{sh:[38,35,39,36,33,37,34],fl:[34,37,33,36,32,35,31]},bass:{sh:[24,21,25,22,19,23,20],fl:[20,23,19,22,18,21,17]}};
+    const hnd=x=>x.n.hand;
     const defs=layout==='treble'?[{clef:'treble',pick:()=>true}]
              :layout==='bass'  ?[{clef:'bass',pick:()=>true}]
-             :[{clef:'treble',pick:x=>x.midi>=60},{clef:'bass',pick:x=>x.midi<60}];
+             :[{clef:'treble',pick:x=>hnd(x)?hnd(x)==='R':x.midi>=60},{clef:'bass',pick:x=>hnd(x)?hnd(x)==='L':x.midi<60}];
     const SP=8, W=840, H=1188, MX=52;
     const staves=defs.map(df=>({
         clef:df.clef, base:df.clef==='treble'?30:18, mid:df.clef==='treble'?34:22,
-        ev:pbStaffEvents(notes.filter(df.pick),M,ts,total)
+        ev:pbStaffEvents(notes.filter(df.pick),mt,total)
     }));
 
     // acidentes por compasso, colunas de acidentes, direção das hastes e agrupamento por tempo (vigas)
@@ -3271,7 +3325,7 @@ function pbBuildScore(opts){
             if(ev.m!==lastM){ state={}; lastM=ev.m; }
             if(ev.rest) return;
             ev.notes.forEach(h=>{
-                const key=h.l+'/'+h.o, cur=state[key]||0;
+                const key=h.l+'/'+h.o, cur=(key in state)?state[key]:(keyAcc[h.l]||0);
                 if(h.tieIn){ h.show=null; state[key]=h.a; return; }
                 if(cur!==h.a){ h.show=h.a; state[key]=h.a; }
             });
@@ -3280,8 +3334,9 @@ function pbBuildScore(opts){
         const groups=[]; let g=null;
         st.ev.forEach((ev,i)=>{
             const ok=!ev.rest && ev.len<=6;
-            if(ok && g && g.m===ev.m && g.beat===Math.floor(ev.pim/beatU) && g.endPos===ev.pos){ g.list.push(ev); g.endPos=ev.pos+ev.len; }
-            else { if(g&&g.list.length>1) groups.push(g); g=ok?{m:ev.m,beat:Math.floor(ev.pim/beatU),endPos:ev.pos+ev.len,list:[ev]}:null; }
+            const bu=mt[ev.m].bu;
+            if(ok && g && g.m===ev.m && g.beat===Math.floor(ev.pim/bu) && g.endPos===ev.pos){ g.list.push(ev); g.endPos=ev.pos+ev.len; }
+            else { if(g&&g.list.length>1) groups.push(g); g=ok?{m:ev.m,beat:Math.floor(ev.pim/bu),endPos:ev.pos+ev.len,list:[ev]}:null; }
         });
         if(g&&g.list.length>1) groups.push(g);
         groups.forEach(gr=>{
@@ -3316,22 +3371,22 @@ function pbBuildScore(opts){
         staves.forEach(st=>st.ev.forEach(ev=>{ if(ev.m===m) posSet.add(ev.pos); }));
         const ps=[...posSet].sort((a,b)=>a-b);
         const cols=ps.map((p,i)=>{
-            const nxt=i<ps.length-1?ps[i+1]:(m+1)*M, gap=nxt-p;
+            const nxt=i<ps.length-1?ps[i+1]:mt[m].s+mt[m].len, gap=nxt-p;
             let left=0, dots=0;
             staves.forEach(st=>st.ev.forEach(ev=>{ if(ev.pos===p&&ev.m===m){ if(!ev.rest) left=Math.max(left,ev.leftExtra); if(pbDotted(ev.len)) dots=6; } }));
             return {pos:p,gap,left,base:14+5.5*Math.sqrt(gap)+dots};
         });
-        measures.push({m,cols});
+        measures.push({m,cols,tsCh:m>0&&mt[m].ts!==mt[m-1].ts});
     }
     // sistemas
-    const clefW=34, tsW=22, AWfull=W-2*MX;
+    const clefW=34, tsW=22, AWfull=W-2*MX+0;
     const systems=[]; let cur=null;
-    const mWidth=ms=>8+ms.cols.reduce((s,c)=>s+c.left+c.base,0)+6;
+    const mWidth=ms=>8+(ms.tsCh?tsW:0)+ms.cols.reduce((s,c)=>s+c.left+c.base,0)+6;
     measures.forEach(ms=>{
         const w=mWidth(ms);
         if(!cur){ cur={ms:[ms],w,first:systems.length===0}; systems.push(cur); }
         else {
-            const av=AWfull-clefW-(cur.first?tsW:0);
+            const av=AWfull-clefW-keyW-(cur.first?tsW:0);
             if(cur.w+w<=av) { cur.ms.push(ms); cur.w+=w; }
             else { cur={ms:[ms],w,first:false}; systems.push(cur); }
         }
@@ -3348,6 +3403,7 @@ function pbBuildScore(opts){
         svgs.push(s); page=s;
         if(pageNo===1){
             pbEl(page,'text',{x:W/2,y:70,'text-anchor':'middle','font-family':'Georgia,Times New Roman,serif','font-size':28,'font-weight':'bold',fill:'#111'},title||'Sem título');
+            if(opts.sub) pbEl(page,'text',{x:W/2,y:92,'text-anchor':'middle','font-family':'Arial,Helvetica,sans-serif','font-size':14,fill:'#555'},opts.sub);
             // ♩ = bpm
             pbEl(page,'ellipse',{cx:MX+5,cy:108,rx:4.6,ry:3.4,transform:'rotate(-20 '+(MX+5)+' 108)',fill:'#111'});
             pbEl(page,'line',{x1:MX+9.2,y1:107,x2:MX+9.2,y2:93,stroke:'#111','stroke-width':1.3});
@@ -3373,11 +3429,11 @@ function pbBuildScore(opts){
     place.forEach(({sys,page:pg,y0},si)=>{
         const tops=staves.map((_,k)=>y0+44+k*(4*SP+STG));
         const left=MX, firstTs=sys.first;
-        const xStart=left+clefW+(firstTs?tsW:0);
-        const AW=AWfull-clefW-(firstTs?tsW:0);
+        const xStart=left+clefW+keyW+(firstTs?tsW:0);
+        const AW=AWfull-clefW-keyW-(firstTs?tsW:0);
         // fator de justificação
         const pads=sys.ms.length*14;
-        const fixed=sys.ms.reduce((s,ms)=>s+ms.cols.reduce((a,c)=>a+c.left,0),0);
+        const fixed=sys.ms.reduce((s,ms)=>s+ms.cols.reduce((a,c)=>a+c.left,0)+(ms.tsCh?tsW:0),0);
         const flex=sys.ms.reduce((s,ms)=>s+ms.cols.reduce((a,c)=>a+c.base,0),0);
         let f=(AW-pads-fixed)/flex;
         const isLast=si===place.length-1;
@@ -3387,6 +3443,14 @@ function pbBuildScore(opts){
         let x=xStart; const colX=new Map(), barX=[];
         sys.ms.forEach(ms=>{
             x+=8;
+            if(ms.tsCh){
+                const [ta,tb]=mt[ms.m].ts.split('/'), tcx=x+tsW/2-2;
+                staves.forEach((st2,k2)=>{
+                    pbEl(pg,'text',{x:tcx,y:tops[k2]+2*SP-1,'text-anchor':'middle','font-family':'Georgia,serif','font-size':SP*2.7,'font-weight':'bold',fill:'#111'},ta);
+                    pbEl(pg,'text',{x:tcx,y:tops[k2]+4*SP-1,'text-anchor':'middle','font-family':'Georgia,serif','font-size':SP*2.7,'font-weight':'bold',fill:'#111'},tb);
+                });
+                x+=tsW;
+            }
             ms.cols.forEach(c=>{ colX.set(ms.m+':'+c.pos,x+c.left+5); x+=c.left+c.base*f; });
             x+=6; barX.push(x);
         });
@@ -3405,14 +3469,22 @@ function pbBuildScore(opts){
         // claves e fórmula de compasso
         staves.forEach((st,k)=>{
             if(st.clef==='treble') pbTrebleClef(pg,left+8,tops[k]+3*SP,SP); else pbBassClef(pg,left+8,tops[k]+SP,SP);
+            if(fifths){
+                const ks=KS_POS[st.clef][fifths>0?'sh':'fl'];
+                for(let i=0;i<Math.abs(fifths);i++) pbAccidental(pg,left+clefW+5+i*9,stepY(st,tops[k],ks[i]),fifths>0?1:-1,SP,INK);
+            }
             if(firstTs){
                 const [a,b]=ts.split('/');
-                const tx=left+clefW+8;
+                const tx=left+clefW+keyW+8;
                 pbEl(pg,'text',{x:tx,y:tops[k]+2*SP-1,'text-anchor':'middle','font-family':'Georgia,serif','font-size':SP*2.7,'font-weight':'bold',fill:INK},a);
                 pbEl(pg,'text',{x:tx,y:tops[k]+4*SP-1,'text-anchor':'middle','font-family':'Georgia,serif','font-size':SP*2.7,'font-weight':'bold',fill:INK},b);
             }
         });
-        pbEl(pg,'text',{x:left+2,y:tops[0]-10,'font-family':'Arial,sans-serif','font-size':10,'font-style':'italic',fill:'#555'},String(sys.ms[0].m+1));
+        const mlab=sys.ms[0].m+(opts.pickup?0:1);
+        if(mlab>0) pbEl(pg,'text',{x:left+2,y:tops[0]-10,'font-family':'Arial,sans-serif','font-size':10,'font-style':'italic',fill:'#555'},String(mlab));
+        if(opts.labels){
+            sys.ms.forEach(ms=>ms.cols.forEach(c=>{ const lt=opts.labels.get(c.pos); if(lt) pbEl(pg,'text',{x:colX.get(ms.m+':'+c.pos)-5,y:tops[0]-17,'font-family':'Arial,Helvetica,sans-serif','font-size':12,'font-weight':'bold',fill:'#1a4fa0'},lt); }));
+        }
         // barras de compasso
         barX.forEach((bx,i)=>{
             const lastBar=isLast&&i===barX.length-1;
@@ -3427,7 +3499,7 @@ function pbBuildScore(opts){
             // hastes e vigas dos grupos desta pauta
             const doneGroups=new Set();
             evs.forEach(ev=>{
-                if(ev.rest){ pbRest(pg,ev,X(ev),top,SP,M,INK); return; }
+                if(ev.rest){ pbRest(pg,ev,X(ev),top,SP,mt[ev.m].len,INK); return; }
                 const cx=X(ev), n=ev.notes;
                 // linhas suplementares
                 const lows=n[0].d, highs=n[n.length-1].d;
@@ -4253,6 +4325,159 @@ async function loadHymn(h){
     }catch(err){ console.error(err); toast('Não foi possível abrir este hino'); }
     loadingOverlay.classList.remove('active');
 }
+
+
+/* ======================== EXPORTAR PDF: acordes · arpejo · partitura (vozes) ======================== */
+const PDF_SHARP_NAMES={1:'C#',3:'D#',8:'G#',10:'A#'};
+function pdfMeta(){
+    const m=state.meta||{}, bpm=Math.max(20,Math.min(300,Math.round(m.bpm||120)));
+    const out={bpm,qOf:m.qOfSec||(s=>s*bpm/60),fifths:m.fifths||0,measures:null,pickup:false,ts:'4/4'};
+    const bi=m.barInfo;
+    if(bi&&bi.length){
+        const ms=[];
+        for(let k=0;k<bi.length;k++){
+            const s0=Math.round(bi[k].q*8), e0=Math.round((k+1<bi.length?bi[k+1].q:bi[k].q+bi[k].len)*8);
+            if(e0-s0<=0) continue;
+            let ts=bi[k].ts;
+            if(!PB_MEASURE[ts]){ const f=Object.keys(PB_MEASURE).find(x=>PB_MEASURE[x]===e0-s0); ts=f||'4/4'; }
+            ms.push({len:e0-s0,ts});
+        }
+        if(ms.length){
+            out.measures=ms; out.ts=(ms[1]||ms[0]).ts;
+            out.pickup=ms.length>1&&ms[0].len<PB_MEASURE[ms[0].ts]&&ms[0].len<ms[1].len;
+        }
+    }
+    return out;
+}
+function pdfAcc(midi,acc,pref){
+    if(acc===1||acc===-1) return acc;
+    return [1,3,6,8,10].includes(((midi%12)+12)%12)?pref:0;
+}
+function pdfNote(n,hand,meta,pref,endSec){
+    const q0=n.sq!==undefined&&endSec===undefined?n.sq:meta.qOf(n.startTime);
+    const q1=endSec!==undefined?meta.qOf(endSec):(n.eq!==undefined?n.eq:meta.qOf(n.endTime));
+    const midi=n.midi0!==undefined?n.midi0:n.midi;
+    return {midi,beat:1+q0,duration:Math.max(0.125,q1-q0),accidental:pdfAcc(midi,n.acc,pref),tied:false,articulations:[],hand};
+}
+function pdfChordLabel(name,fifths){
+    let n=name;
+    if(fifths>=4){ const m=/^([A-G]b|F#)(.*)$/.exec(n); if(m){ const pc=PC_NAMES.indexOf(m[1]); if(PDF_SHARP_NAMES[pc]) n=PDF_SHARP_NAMES[pc]+m[2]; } }
+    return n.replace(/^([A-G])b/,'$1♭').replace(/^([A-G])#/,'$1♯').replace('m7(b5)','m7(♭5)');
+}
+// melodia (soprano, mão direita) + acompanhamento (mão esquerda) com os nomes dos acordes
+function pdfAccompaniment(arp,meta,pref){
+    const idx=satbIdx(); if(!idx) throw new Error('sem vozes');
+    if(!state.chordSegs) state.chordSegs=analyzeChords();
+    if(!state.chordNotesBy) state.chordNotesBy={};
+    const key=arp?'arp':'chords';
+    if(!state.chordNotesBy[key]&&state.chordSegs) state.chordNotesBy[key]=buildChordNotes(state.chordSegs,arp);
+    const cn=(state.chordNotesBy[key]||[]).slice().sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
+    if(!cn.length) throw new Error('sem acordes');
+    const ons=[...new Set(cn.map(n=>Math.round(n.startTime*1000)))].sort((a,b)=>a-b);
+    const notes=[];
+    state.allNotes.filter(n=>n.track===idx.S).forEach(n=>notes.push(pdfNote(n,'R',meta,pref)));
+    cn.forEach(n=>{
+        const st=Math.round(n.startTime*1000), nx=ons.find(t=>t>st);
+        let end=n.endTime+0.03; if(nx!==undefined) end=Math.min(end,nx/1000);
+        if(end-n.startTime<0.02) return;
+        notes.push(pdfNote(n,'L',meta,pref,end));
+    });
+    const labels=new Map(); let prev='';
+    (state.chordSegs||[]).filter(g=>!g.solo&&g.name).sort((a,b)=>a.a-b.a).forEach(g=>{
+        if(g.name===prev) return; prev=g.name;
+        const q=meta.qOf(g.a); labels.set(Math.max(0,Math.round(((1+q)-1)*8)),pdfChordLabel(g.name,meta.fifths));
+    });
+    return {notes,labels,layout:'grand'};
+}
+// partitura das vozes escolhidas (soprano e contralto na pauta de cima, tenor e baixo na de baixo)
+function pdfVoices(tracks,meta,pref){
+    const idx=satbIdx(), set=new Set(tracks), seen=new Set(), notes=[];
+    const handOf=t=>idx?((t===idx.S||t===idx.A)?'R':'L'):undefined;
+    state.allNotes.filter(n=>set.has(n.track||0)).sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi).forEach(n=>{
+        const k=(n.midi0!==undefined?n.midi0:n.midi)+'@'+n.startTime.toFixed(3)+'@'+n.endTime.toFixed(3)+'@'+handOf(n.track||0);
+        if(seen.has(k)) return; seen.add(k);
+        notes.push(pdfNote(n,handOf(n.track||0),meta,pref));
+    });
+    let layout='grand';
+    if(idx){
+        const hasR=tracks.some(t=>t===idx.S||t===idx.A), hasL=tracks.some(t=>t===idx.T||t===idx.B);
+        layout=hasR&&hasL?'grand':hasR?'treble':'bass';
+    }
+    return {notes,labels:null,layout};
+}
+function pdfTitle(){
+    const h=state.currentHymn;
+    if(state.source==='hymn'&&h) return String(h.n).padStart(3,'0')+' · '+h.title;
+    return (fileNameEl.textContent||'').replace(/\.(mxl|xml|musicxml|mid|midi)$/i,'').trim()||'Partitura';
+}
+function openPdfModal(){
+    if(!state.allNotes||!state.allNotes.length){ toast('Abra um hino ou um arquivo antes de gerar o PDF'); return; }
+    const box=document.getElementById('pdfChoices'); box.innerHTML='';
+    document.getElementById('pdfInfo').textContent=pdfTitle();
+    document.getElementById('pdfMsg').textContent='';
+    const mk=(id,title,small,checked)=>{
+        const l=document.createElement('label'); l.className='pdf-opt';
+        const i=document.createElement('input'); i.type='checkbox'; i.id=id; i.checked=!!checked;
+        const d=document.createElement('div'); d.innerHTML='<span></span><small></small>';
+        d.firstChild.textContent=title; d.lastChild.textContent=small;
+        l.append(i,d); box.appendChild(l); return l;
+    };
+    if(satbIdx()&&state.beats&&state.beats.length>2){
+        mk('pdfChords','🎶 Melodia + acordes','Soprano na mão direita e acordes na mão esquerda, com o nome do acorde acima da pauta.',false);
+        mk('pdfArp','🎼 Melodia + arpejo','Soprano na mão direita e arpejo na mão esquerda, com o nome do acorde acima da pauta.',false);
+    }
+    mk('pdfScore','📄 Partitura das vozes','Escolha abaixo quais vozes entram na partitura.',true);
+    const vb=document.createElement('div'); vb.className='pdf-voices'; vb.id='pdfVoices';
+    state.voiceList.forEach(v=>{
+        const l=document.createElement('label'), i=document.createElement('input');
+        i.type='checkbox'; i.checked=true; i.value=v.track;
+        l.append(i,document.createTextNode(v.name)); vb.appendChild(l);
+    });
+    box.appendChild(vb);
+    const sc=document.getElementById('pdfScore');
+    sc.onchange=()=>vb.querySelectorAll('input').forEach(i=>{ i.disabled=!sc.checked; });
+    showModal('mPdf');
+}
+async function pdfGenerate(){
+    const msg=document.getElementById('pdfMsg'), btn=document.getElementById('pdfGo');
+    const on=id=>{ const e=document.getElementById(id); return !!(e&&e.checked); };
+    const tracks=[...document.querySelectorAll('#pdfVoices input:checked')].map(i=>+i.value);
+    const want=[];
+    if(on('pdfChords')) want.push('chords');
+    if(on('pdfArp')) want.push('arp');
+    if(on('pdfScore')){ if(!tracks.length){ msg.style.color='#ff6b6b'; msg.textContent='Marque pelo menos uma voz para a partitura.'; return; } want.push('score'); }
+    if(!want.length){ msg.style.color='#ff6b6b'; msg.textContent='Escolha pelo menos uma versão.'; return; }
+    btn.disabled=true; msg.style.color=''; msg.textContent='Montando o PDF…';
+    try{
+        const PB=window.__pb; if(!PB||!PB.pbBuildScore) throw new Error('módulo de partitura não carregou');
+        const meta=pdfMeta(), pref=meta.fifths<0?-1:1, title=pdfTitle(), pages=[];
+        for(const w of want){
+            let part, sub;
+            if(w==='score'){
+                part=pdfVoices(tracks,meta,pref);
+                sub='Partitura — '+state.voiceList.filter(v=>tracks.includes(v.track)).map(v=>v.name).join(', ');
+            } else {
+                part=pdfAccompaniment(w==='arp',meta,pref);
+                sub=w==='arp'?'Melodia + arpejo':'Melodia + acordes';
+            }
+            msg.textContent='Desenhando: '+sub+'…';
+            await new Promise(r=>setTimeout(r,30));
+            const sc=PB.pbBuildScore({notes:part.notes,labels:part.labels,layout:part.layout,title,sub,ts:meta.ts,bpm:meta.bpm,
+                fifths:meta.fifths,measures:meta.measures,pickup:meta.pickup});
+            for(const svg of sc.svgs) pages.push(await PB.svgToJpeg(svg,sc.W,sc.H,2.6));
+        }
+        const base=title.replace(/[\\/:*?"<>|]+/g,'').trim()||'partitura';
+        const suf=want.length===1?({chords:' - acordes',arp:' - arpejo',score:' - partitura'})[want[0]]:'';
+        await tbSaveFile(base+suf+'.pdf',PB.makePdf(pages));
+        hideModal('mPdf'); toast('PDF gerado ('+pages.length+' página'+(pages.length>1?'s':'')+')','success');
+    }catch(e){
+        console.error(e); msg.style.color='#ff6b6b';
+        msg.textContent='Não foi possível gerar o PDF'+(e&&e.message?' ('+e.message+')':'')+'.';
+    }
+    btn.disabled=false;
+}
+document.getElementById('btnPdf').onclick=openPdfModal;
+document.getElementById('pdfGo').onclick=pdfGenerate;
 
 // versão Pro removida: tudo liberado
 (function(){
