@@ -1,1 +1,1 @@
-# pianotab
+# DigitaHinos Piano

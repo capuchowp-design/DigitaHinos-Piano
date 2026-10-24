@@ -1,6 +1,6 @@
 {
-  "name": "Note Bounce - Visualizador MIDI",
-  "short_name": "Note Bounce",
+  "name": "DigitaHinos Piano - Visualizador MIDI",
+  "short_name": "DigitaHinos Piano",
   "description": "Visualizador e editor MIDI com piano interativo",
   "start_url": "./index.html",
   "display": "standalone",
