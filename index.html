@@ -815,9 +815,9 @@
     <div class="pb-body">
       <div id="proWhy" class="pb-fine" style="margin:0 0 10px;font-weight:600;color:var(--text-main)"></div>
       <ul class="pro-feats">
-        <li>🎼 <b>Hinos completos</b><br><small>Grátis: prévia de <span class="pv-sec">30</span> segundos de cada hino</small></li>
+        <li>🎼 <b>Todos os 480 hinos</b><br><small>Grátis: hinos 1 a 50</small></li>
         <li>⏩ <b>Alterar a velocidade</b><br><small>Grátis: somente 1x</small></li>
-        <li>🎚 <b>Escolher a voz</b> — soprano, contralto, tenor ou baixo<br><small>Grátis: todas as vozes juntas</small></li>
+        <li>✨ <b>Arpejo avançado</b> (na tela e no PDF)<br><small>Grátis: arpejo simples e acordes</small></li>
       </ul>
       <div id="proBuy">
         <div class="pb-fine" id="proHow" style="margin:0 0 8px"></div>
@@ -1267,9 +1267,13 @@ const state={
     pausedAt:0,
     sampler:null, samplerReady:false, piano:null, synth:null, organ:null, instrument:'piano',
     midiLoaded:false, allNotes:[], voiceList:[], voiceSel:new Set(),
-    pro:true, source:'file', preview:false, currentHymn:null,
+    pro:false, source:'file', preview:false, currentHymn:null,
     pps:200  // pixels per second
 };
+// ---- BLOQUEIOS DA VERSÃO GRÁTIS (mude true/false aqui para liberar ou travar cada recurso) ----
+const PRO_FREE_HYMNS=50;   // hinos 1 a 50 são grátis; do 51 em diante exigem Pro
+const PRO_LOCK={ speed:true, arp2:true, hymns:true, arp:false, chords:false, voices:false };
+const proLocked=k=>!state.pro&&!!PRO_LOCK[k];
 
 // ======================== DOM ========================
 const mainCanvas=document.getElementById('mainCanvas');
@@ -1513,7 +1517,7 @@ async function applyNotes(notes, duration, names, meta){
     welcomeScreen.classList.add('hidden');
     resetPlayback();
     drawScene();
-    if(satbIdx()&&state.pro&&state.beats&&state.beats.length>2) setArrangement('arp');   // abre direto no piano (melodia + arpejo)
+    if(satbIdx()&&!proLocked('arp')&&state.beats&&state.beats.length>2) setArrangement('arp');   // abre direto no piano (melodia + arpejo)
 }
 
 // ======================== SELETOR DE VOZES ========================
@@ -1929,7 +1933,7 @@ function buildAdvancedSoprano(){
 function setArrangement(k){
     const idx=satbIdx(); if(!idx) return;
     if(k==='four'){ setVoiceSel(state.voiceList.map(v=>v.track)); setInstrument('organ'); return; }
-    if(!state.pro){ openProModal('Os modos "melodia + acordes" e "melodia + arpejo" (soprano na mão direita e acompanhamento na esquerda) são recursos Pro.'); return; }
+    if(proLocked(k)){ openProModal(k==='arp2'?'O arpejo avançado é um recurso Pro.':'Este modo de acompanhamento é um recurso Pro.'); return; }
     if(!state.chordSegs) state.chordSegs=analyzeChords();
     if(!state.chordNotesBy) state.chordNotesBy={};
     if(!state.chordNotesBy[k]&&state.chordSegs) state.chordNotesBy[k]=(k==='arp2')?buildAdvancedAccompaniment(state.chordSegs):buildChordNotes(state.chordSegs,k==='arp');
@@ -1951,7 +1955,7 @@ function updateChordBadge(){
     if(cb.textContent!==nm) cb.textContent=nm;
 }
 function toggleVoice(t){
-    if(!state.pro){ openProModal('Escolher uma voz (soprano, contralto, tenor ou baixo) é um recurso Pro.'); return; }
+    if(proLocked('voices')){ openProModal('Escolher uma voz (soprano, contralto, tenor ou baixo) é um recurso Pro.'); return; }
     const all=state.voiceList.map(v=>v.track), sel=new Set(state.voiceSel);
     if(sel.size===all.length) setVoiceSel([t]);               // estava tudo ligado → só esta voz
     else { sel.has(t)?sel.delete(t):sel.add(t); setVoiceSel(sel.size?[...sel]:all); }   // senão liga/desliga; vazio = todas
@@ -1972,16 +1976,16 @@ function isAcc(){ return state.arr==='chords'||state.arr==='arp'||state.arr==='a
 function refreshVoiceBar(){
     const all=state.voiceList.length, allOn=state.voiceSel.size===all&&!isAcc();
     document.querySelectorAll('#voiceChips .voice-chip').forEach(b=>{
-        const lock=!state.pro&&!b.classList.contains('all'); b.classList.toggle('locked',lock);
+        const lock=proLocked('voices')&&!b.classList.contains('all'); b.classList.toggle('locked',lock);
         const tn=b.lastChild; if(tn&&tn.nodeType===3){ const base=tn.nodeValue.replace(/ 🔒$/,''); tn.nodeValue=base+(lock?' 🔒':''); }
     });
-    const pb=document.getElementById('previewBadge'); if(pb) pb.hidden=!(state.preview&&!state.pro);
+    const pb=document.getElementById('previewBadge'); if(pb) pb.hidden=true;
     document.querySelectorAll('#voiceChips .voice-chip').forEach(b=>{
         if(b.classList.contains('all')) b.classList.toggle('on',allOn);
         else { const t=+[...b.classList].find(c=>/^v\d+$/.test(c)).slice(1); b.classList.toggle('on',!allOn&&!isAcc()&&state.voiceSel.has(t)); }
     });
     document.querySelectorAll('#arrChips .voice-chip').forEach(b=>{
-        const k=b.dataset.arr, lock=!state.pro&&(k==='chords'||k==='arp');
+        const k=b.dataset.arr, lock=proLocked(k);
         b.classList.toggle('on',state.arr===k);
         const tn=b.lastChild; if(tn&&tn.nodeType===3){ const base=tn.nodeValue.replace(/ 🔒$/,''); tn.nodeValue=base+(lock?' 🔒':''); }
         b.classList.toggle('locked',lock);
@@ -2326,7 +2330,7 @@ progressBar.addEventListener('touchstart',e=>{e.preventDefault();handleSeek(e.to
 document.getElementById('instSelect').addEventListener('change',e=>setInstrument(e.target.value));
 try{ const si=localStorage.getItem('pianotab:inst'); if(si==='organ') setInstrument('organ'); }catch(e){}
 speedSelect.addEventListener('change',e=>{
-    if(!state.pro&&e.target.value!=='1'){ e.target.value='1'; openProModal('Alterar a velocidade é um recurso Pro.'); return; }
+    if(proLocked('speed')&&e.target.value!=='1'){ e.target.value='1'; openProModal('Alterar a velocidade é um recurso Pro.'); return; }
     state.speed=parseFloat(e.target.value);
     if(state.isPlaying){ const cp=state.currentTime; pausePlayback(); state.pausedAt=cp; startPlayback(); }
 });
@@ -2345,7 +2349,7 @@ document.addEventListener('keydown',e=>{
     else if(/^(Digit|Numpad)[0-8]$/.test(e.code)&&state.voiceList.length>1){
         const k=+e.code.slice(-1);
         if(k===0) setVoiceSel(state.voiceList.map(v=>v.track));
-        else if(!state.pro) openProModal('Escolher uma voz é um recurso Pro.');
+        else if(proLocked('voices')) openProModal('Escolher uma voz é um recurso Pro.');
         else if(state.voiceList[k-1]) setVoiceSel([state.voiceList[k-1].track]);
     }
     else if(e.code==='ArrowLeft'){if(state.midiLoaded) seekTo(state.pausedAt-5);}
@@ -4465,9 +4469,13 @@ function refreshProUI(){
     document.getElementById('proBuy').hidden=pro; document.getElementById('proActive').hidden=!pro;
     document.getElementById('proRestoreRow').hidden=!PRO_SERVER;
     const lc=licLoad(); document.getElementById('proCodeHint').textContent=(pro&&lc)?'Código: ••••-••••-'+lc.code.slice(8):'';
-    [...speedSelect.options].forEach(o=>{ if(!o.dataset.l) o.dataset.l=o.textContent; o.textContent=o.dataset.l+((!pro&&o.value!=='1')?' 🔒':''); });
-    if(!pro&&speedSelect.value!=='1'){ speedSelect.value='1'; state.speed=1; }
+    [...speedSelect.options].forEach(o=>{ if(!o.dataset.l) o.dataset.l=o.textContent; o.textContent=o.dataset.l+((proLocked('speed')&&o.value!=='1')?' 🔒':''); });
+    if(proLocked('speed')&&speedSelect.value!=='1'){ speedSelect.value='1'; state.speed=1; }
     refreshVoiceBar();
+    try{
+        if(hymnIndex){ renderHinos(document.getElementById('hnSearch').value);
+            document.getElementById('hnHint').textContent=pro?'':'Grátis: hinos 1 a '+PRO_FREE_HYMNS+' · 🔒 hinos '+(PRO_FREE_HYMNS+1)+' a '+HYMN_INDEX.length+' são Pro'; }
+    }catch(e){}
 }
 function openProModal(why){
     document.getElementById('proWhy').textContent=why||'';
@@ -4543,7 +4551,7 @@ let hymnIndex=null;
 const hnNorm=t=>String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
 async function openHinos(){
     showModal('mHinos');
-    document.getElementById('hnHint').textContent='';
+    document.getElementById('hnHint').textContent=state.pro?'':'Grátis: hinos 1 a '+PRO_FREE_HYMNS+' · 🔒 hinos '+(PRO_FREE_HYMNS+1)+' a '+HYMN_INDEX.length+' são Pro';
     if(!hymnIndex){
         hymnIndex=HYMN_INDEX;
         hymnIndex.forEach(h=>{ h._k=hnNorm(String(h.n).padStart(3,'0')+' '+h.title+' '+h.author); });
@@ -4560,7 +4568,7 @@ function renderHinos(q){
     list.forEach(h=>{
         const li=document.createElement('li'), t=document.createElement('div'); t.className='t';
         const b=document.createElement('b'), num=document.createElement('span'); num.className='hn-num'; num.textContent=String(h.n).padStart(3,'0');
-        b.append(num,document.createTextNode(' '+h.title)); t.appendChild(b);
+        const lk=proLocked('hymns')&&h.n>PRO_FREE_HYMNS; b.append(num,document.createTextNode(' '+h.title+(lk?' 🔒':''))); t.appendChild(b); if(lk) li.style.opacity='.6';
         if(h.author){ const sm=document.createElement('small'); sm.textContent=h.author; t.appendChild(sm); }
         li.appendChild(t); li.onclick=()=>loadHymn(h); frag.appendChild(li);
     });
@@ -4571,6 +4579,7 @@ document.getElementById('btnHinos').onclick=openHinos;
 document.getElementById('btnHinosWelcome').onclick=openHinos;
 
 async function loadHymn(h){
+    if(proLocked('hymns')&&h.n>PRO_FREE_HYMNS){ openProModal('Os hinos '+(PRO_FREE_HYMNS+1)+' a '+HYMN_INDEX.length+' fazem parte da versão Pro. Grátis: hinos 1 a '+PRO_FREE_HYMNS+'.'); return; }
     loadingOverlay.classList.add('active');
     try{
         const r=await fetch('hinos/'+h.file);
@@ -4579,10 +4588,6 @@ async function loadHymn(h){
         const parsed=await parseScoreFile(await r.arrayBuffer());
         if(!parsed.notes.length) throw new Error('Nenhuma nota encontrada');
         let notes=parsed.notes, duration=parsed.duration, preview=false;
-        if(!state.pro&&duration>PRO_PREVIEW_SECONDS+1){
-            preview=true; duration=PRO_PREVIEW_SECONDS;
-            notes=notes.filter(n=>n.startTime<PRO_PREVIEW_SECONDS).map(n=>Object.assign({},n,{endTime:Math.min(n.endTime,PRO_PREVIEW_SECONDS),duration:Math.min(n.endTime,PRO_PREVIEW_SECONDS)-n.startTime}));
-        }
         if(state.isPlaying) stopPlayback();
         state.source='hymn'; state.preview=preview; state.currentHymn=h;
         speedSelect.value='1'; state.speed=1;
@@ -4692,9 +4697,9 @@ function openPdfModal(){
         l.append(i,d); box.appendChild(l); return l;
     };
     if(satbIdx()&&state.beats&&state.beats.length>2){
-        mk('pdfChords','🎶 Melodia + acordes','Soprano na mão direita e acordes na mão esquerda, com o nome do acorde acima da pauta.',false);
-        mk('pdfArp','🎼 Melodia + arpejo','Soprano na mão direita e arpejo na mão esquerda, com o nome do acorde acima da pauta.',false);
-        mk('pdfArp2','✨ Melodia + arpejo avançado','Arpejo largo com passagens ligando um acorde ao outro; no soprano, passagens em alguns fins de frase.',false);
+        mk('pdfChords','🎶 Melodia + acordes'+(proLocked('chords')?' 🔒':''),'Soprano na mão direita e acordes na mão esquerda, com o nome do acorde acima da pauta.',false);
+        mk('pdfArp','🎼 Melodia + arpejo'+(proLocked('arp')?' 🔒':''),'Soprano na mão direita e arpejo na mão esquerda, com o nome do acorde acima da pauta.',false);
+        mk('pdfArp2','✨ Melodia + arpejo avançado'+(proLocked('arp2')?' 🔒':''),'Arpejo largo com passagens ligando um acorde ao outro; no soprano, passagens em alguns fins de frase.',false);
     }
     mk('pdfScore','📄 Partitura das vozes','Escolha abaixo quais vozes entram na partitura.',true);
     const vb=document.createElement('div'); vb.className='pdf-voices'; vb.id='pdfVoices';
@@ -4712,6 +4717,9 @@ async function pdfGenerate(){
     const msg=document.getElementById('pdfMsg'), btn=document.getElementById('pdfGo');
     const on=id=>{ const e=document.getElementById(id); return !!(e&&e.checked); };
     const tracks=[...document.querySelectorAll('#pdfVoices input:checked')].map(i=>+i.value);
+    for(const k of [['pdfChords','chords'],['pdfArp','arp'],['pdfArp2','arp2']]){
+        if(on(k[0])&&proLocked(k[1])){ hideModal('mPdf'); openProModal('O PDF com '+(k[1]==='arp2'?'arpejo avançado':k[1]==='arp'?'arpejo':'acordes')+' é um recurso Pro.'); return; }
+    }
     const want=[];
     if(on('pdfChords')) want.push('chords');
     if(on('pdfArp')) want.push('arp');
@@ -4750,10 +4758,13 @@ async function pdfGenerate(){
 document.getElementById('btnPdf').onclick=openPdfModal;
 document.getElementById('pdfGo').onclick=pdfGenerate;
 
-// versão Pro removida: tudo liberado
+// inicialização da licença: começa grátis; vira Pro se houver licença salva (ou se o servidor reconhecer este aparelho)
 (function(){
-    state.pro=true; refreshProUI();
-    const b=document.getElementById('btnPro'); if(b) b.style.display='none';
+    const l=licLoad();
+    state.pro=!!(l&&(PRO_SERVER||proValid(l.code)));
+    refreshProUI();
+    if(!state.pro&&PRO_SERVER) proRestore(true);   // tenta recuperar sozinho a licença ligada a este aparelho
+    else proVerify();
 })();
 
 </script>
