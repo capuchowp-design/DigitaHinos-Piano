@@ -1271,9 +1271,10 @@ const state={
     pps:200  // pixels per second
 };
 // ---- BLOQUEIOS DA VERSÃO GRÁTIS (mude true/false aqui para liberar ou travar cada recurso) ----
+const PRO_ATIVO=false;     // false = TUDO LIBERADO (sem Pro). Para voltar a travar recursos, troque para true.
 const PRO_FREE_HYMNS=50;   // hinos 1 a 50 são grátis; do 51 em diante exigem Pro
 const PRO_LOCK={ speed:true, arp2:true, hymns:true, arp:false, chords:false, voices:false };
-const proLocked=k=>!state.pro&&!!PRO_LOCK[k];
+const proLocked=k=>PRO_ATIVO&&!state.pro&&!!PRO_LOCK[k];
 
 // ======================== DOM ========================
 const mainCanvas=document.getElementById('mainCanvas');
@@ -4758,12 +4759,17 @@ async function pdfGenerate(){
 document.getElementById('btnPdf').onclick=openPdfModal;
 document.getElementById('pdfGo').onclick=pdfGenerate;
 
-// inicialização da licença: começa grátis; vira Pro se houver licença salva (ou se o servidor reconhecer este aparelho)
+// inicialização: com PRO_ATIVO=false o app fica 100% liberado e sem botão Pro
 (function(){
+    if(!PRO_ATIVO){
+        state.pro=true; refreshProUI();
+        const b=document.getElementById('btnPro'); if(b) b.style.display='none';
+        return;
+    }
     const l=licLoad();
     state.pro=!!(l&&(PRO_SERVER||proValid(l.code)));
     refreshProUI();
-    if(!state.pro&&PRO_SERVER) proRestore(true);   // tenta recuperar sozinho a licença ligada a este aparelho
+    if(!state.pro&&PRO_SERVER) proRestore(true);
     else proVerify();
 })();
 
