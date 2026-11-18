@@ -315,6 +315,7 @@
         /* PRO / HINOS */
         .voice-chip.locked { opacity:.7; }
         .voice-chip.arr.on { --vc:#ffa500; }
+        .voice-chip.hand.on { --vc:#4fc3f7; }
         .arr-sep { width:1px; align-self:stretch; background:var(--border-main); margin:0 4px; }
         .chord-badge { display:inline-flex; align-items:center; padding:4px 12px; border-radius:14px; background:#ffa50022; border:1px solid #ffa500; color:#ffb940; font-size:15px; font-weight:800; min-width:54px; justify-content:center; letter-spacing:.5px; }
         .chord-badge[hidden] { display:none; }
@@ -817,7 +818,6 @@
       <ul class="pro-feats">
         <li>🎼 <b>Todos os 480 hinos</b><br><small>Grátis: hinos 1 a 50</small></li>
         <li>⏩ <b>Alterar a velocidade</b><br><small>Grátis: somente 1x</small></li>
-        <li>✨ <b>Arpejo avançado</b> (na tela e no PDF)<br><small>Grátis: arpejo simples e acordes</small></li>
       </ul>
       <div id="proBuy">
         <div class="pb-fine" id="proHow" style="margin:0 0 8px"></div>
@@ -1273,7 +1273,7 @@ const state={
 // ---- BLOQUEIOS DA VERSÃO GRÁTIS (mude true/false aqui para liberar ou travar cada recurso) ----
 const PRO_ATIVO=false;     // false = TUDO LIBERADO (sem Pro). Para voltar a travar recursos, troque para true.
 const PRO_FREE_HYMNS=50;   // hinos 1 a 50 são grátis; do 51 em diante exigem Pro
-const PRO_LOCK={ speed:true, arp2:true, hymns:true, arp:false, chords:false, voices:false };
+const PRO_LOCK={ speed:true, hymns:true, arp:false, chords:false, voices:false };
 const proLocked=k=>PRO_ATIVO&&!state.pro&&!!PRO_LOCK[k];
 
 // ======================== DOM ========================
@@ -1506,7 +1506,7 @@ function loadMidiFile(file){
 
 async function applyNotes(notes, duration, names, meta){
     notes.forEach(n=>{ if(!n.color) n.color=gc(n.track||0); });
-    state.arr='four'; state.chordNotes=null; state.chordNotesBy={}; state.chordSegs=null; state.sopAdv=null; state.beats=(meta&&meta.beats)||null; state.bars=(meta&&meta.bars)||null; state.meta=meta||null;
+    state.arr='four'; state.chordNotes=null; state.chordNotesBy={}; state.chordSegs=null; state.arpSegs=null; state.rhFills=null; state.hand='both'; state.beats=(meta&&meta.beats)||null; state.bars=(meta&&meta.bars)||null; state.meta=meta||null;
     state.allNotes=notes; state.notes=notes; state.duration=duration; state.midiLoaded=true;
     buildVoiceBar(notes, names);
     applyHandVoicing();
@@ -1540,8 +1540,11 @@ function buildVoiceBar(notes, names){
             b.appendChild(document.createTextNode(label)); b.addEventListener('click',()=>setArrangement(k)); ac.appendChild(b); };
         mkA('chords','🎶 Melodia + acordes (piano)','Mão direita: soprano · Mão esquerda: acordes calculados da partitura');
         mkA('arp','🎼 Melodia + arpejo (piano)','Mão direita: soprano · Mão esquerda: arpejo (baixo Alberti, dedilhado aberto ou arpejo lento, conforme o compasso)');
-        mkA('arp2','✨ Melodia + arpejo avançado (piano)','Mão direita: soprano com passagens em fins de frase · Mão esquerda: arpejo largo com passagens ligando um acorde ao outro');
         const sep=document.createElement('span'); sep.className='arr-sep'; ac.appendChild(sep);
+        const hl=document.createElement('span'); hl.className='vb-label hand-lbl'; hl.textContent='Ouvir:'; ac.appendChild(hl);
+        [['both','🙌 Duas mãos','Tocar as duas mãos'],['L','🤚 Só esquerda','Tocar só a mão esquerda (acompanhamento)'],['R','✋ Só direita','Tocar só a mão direita (melodia)']].forEach(([h,label,title])=>{
+            const b=document.createElement('button'); b.type='button'; b.className='voice-chip hand'; b.dataset.hand=h; b.title=title;
+            b.appendChild(document.createTextNode(label)); b.addEventListener('click',()=>setHand(h)); ac.appendChild(b); });
     }
     bar.classList.toggle('arr-only',!!satbIdx());
     if(satbIdx()){ const sp=ac.querySelector('.arr-sep'); if(sp) sp.remove(); bar.hidden=false; refreshVoiceBar(); return; }   // hinos: só os modos de piano
@@ -1630,7 +1633,7 @@ function analyzeChords(){
         let best=null;
         for(let r=0;r<12;r++) for(const T of CH_TPL){ const sc=chordScore(w,W,bassPc,r,T); if(!best||sc>best.sc) best={r,T,sc}; }
         if(prev){ const ps=chordScore(w,W,bassPc,prev.r,prev.T); if(ps>=best.sc-0.12*W) best={r:prev.r,T:prev.T,sc:ps}; }
-        prev=best; wins.push({a,b,ch:best});
+        prev=best; wins.push({a,b,ch:best,bpc:bassPc});
     }
     // Pontos em que o acorde é tocado de novo (nunca fica preso até o acorde mudar):
     //  • todo início de compasso; • compassos de 4 tempos ou mais: a cada 2 tempos (tempo forte);
@@ -1653,13 +1656,13 @@ function analyzeChords(){
         if(!wd.ch){ return; }
         const L=segs[segs.length-1], same=L&&Math.abs(L.b-wd.a)<1e-3&&L.r===wd.ch.r&&L.T===wd.ch.T;
         if(same&&!strike.has(r3(wd.a))) L.b=wd.b;
-        else segs.push({a:wd.a,b:wd.b,r:wd.ch.r,T:wd.ch.T});
+        else segs.push({a:wd.a,b:wd.b,r:wd.ch.r,T:wd.ch.T,bpc:wd.bpc});
     });
     // divide os acordes longos nos inícios de frase
     for(let k=0;k<segs.length;k++){
         const g=segs[k], bl=beatLen(g.a);
         const t=phr.find(x=>x>g.a+0.3*bl&&x<g.b-0.3*bl);
-        if(t!==undefined){ segs.splice(k+1,0,{a:t,b:g.b,r:g.r,T:g.T}); g.b=t; }
+        if(t!==undefined){ segs.splice(k+1,0,{a:t,b:g.b,r:g.r,T:g.T,bpc:g.bpc}); g.b=t; }
     }
     // "Respostas do baixo": o soprano sustenta (ou pausa), as outras vozes não se movem e o baixo toca sozinho
     // duas ou mais notas seguidas. Nesse trecho o acorde para, o baixo toca a passagem (cada nota dobrada na
@@ -1698,7 +1701,7 @@ function analyzeChords(){
                 });
                 pieces=nx;
             });
-            pieces.forEach(pc=>res.push({a:pc.a,b:pc.b,r:g.r,T:g.T}));
+            pieces.forEach(pc=>res.push({a:pc.a,b:pc.b,r:g.r,T:g.T,bpc:g.bpc}));
         });
         passages.forEach(ps=>res.push({a:ps.a,b:ps.b,solo:true,notes:ps.notes,name:'♪ baixo'}));
         res.sort((x,y)=>x.a-y.a); segs=res;
@@ -1706,25 +1709,188 @@ function analyzeChords(){
     segs.forEach(g=>{ if(!g.solo) g.name=PC_NAMES[g.r]+g.T.suf; });
     return segs;
 }
-// Acorde repetido 3+ vezes seguidas: alterna posição fundamental e inversões (1ª, 2ª, 1ª…) para o arpejo não ficar igual
-function repInvMap(segs){
-    const m=new Map(); let run=[];
-    const fl=()=>{ if(run.length>=3) run.forEach((g,j)=>m.set(g,[0,1,2,1][j%4])); run=[]; };
-    segs.forEach(g=>{ if(g.solo) return; const L=run[run.length-1]; if(L&&L.r===g.r&&L.T===g.T) run.push(g); else { fl(); run=[g]; } });
-    fl(); return m;
+// ======================== PIANO (modo intermediário) ========================
+// Padrões estudados na partitura de piano do Hinário 5 (hinos 51 a 480):
+//  • Mão direita = o pentagrama de cima do hino (soprano + contralto em bloco), mais enfeites pontuais (ver buildPianoRH).
+//  • Mão esquerda = arpejo sobre o acorde, com o baixo do hino como nota mais grave. O desenho muda de hino para hino
+//    (como no livro), de forma fixa dentro de cada hino:
+//      onda      R-5-8-10-8-5-R-3 …   (o mais comum)       alternado  R-5-8-5-3-5-8-5 …
+//      fechado   R-3-5-3 / R-3-5-8-5-3 (posição fechada)    semicolcheias  grupos de 6 (6/8, 9/8, 12/8) ou de 4 por tempo
+//      lento     uma nota por tempo (R-5-8) — hinos lentos em 3/4 e 4/4
+//    Introdução: nos hinos de semicolcheias, os 2 primeiros compassos vêm em acordes de bloco (como no livro).
+//  • Quando o acorde muda, a última nota do compasso vira uma nota de passagem rumo ao próximo baixo.
+// Números = degraus da "escada" do acorde: 0 baixo · 1 e 2 próximas notas do acorde · 3 = 0+8ª · 4 = 1+8ª · 5 = 2+8ª
+const ARP_STYLES=['wave','alt','wave','close','sixt','wave','alt','sixt','close','wave','slow'];
+function arpStyle(){ const n=(state.currentHymn&&+state.currentHymn.n)||0; return ARP_STYLES[(n*7+(n>>2))%ARP_STYLES.length]; }
+const tile=(a,n)=>{ const r=[]; for(let i=0;i<n;i++) r.push(a[i%a.length]); return r; };
+// devolve {pats:[desenho A, desenho B], div} — div = quantas notas por colcheia (2 = semicolcheias, 1 = colcheias, 0.5 = semínimas)
+function arpPatterns(style,eb,den,eighthSec){
+    const compound=den===8&&(eb===6||eb===9||eb===12);
+    if(style==='sixt'&&eighthSec>=0.26){
+        if(compound) return {div:2,pats:[tile([0,2,3,4,3,2],eb*2),tile([0,2,3,2,1,2],eb*2)]};
+        return {div:2,pats:[tile([0,2,3,2,1,2,3,2],eb*2),tile([0,2,3,4,3,2,1,2],eb*2)]};
+    }
+    if(style==='slow'&&!compound&&eb<=12&&eighthSec>=0.3){
+        const beats=eb/2; return {div:0.5,pats:[tile([0,2,3,2],beats),tile([0,1,2,3],beats)]};
+    }
+    const W={4:[[0,2,3,4],[0,2,3,2]],6:[[0,2,3,4,3,2],[0,2,3,2,1,2]],8:[[0,2,3,4,3,2,0,1],[0,2,3,2,1,2,3,2]],
+             9:[[0,2,3,1,2,3,0,2,3],[0,2,3,2,1,2,3,2,1]],12:[[0,2,3,1,2,3,0,2,3,1,2,3],[0,2,3,4,3,2,0,2,3,4,3,2]]};
+    const C={4:[[0,1,2,1],[0,1,2,3]],6:[[0,1,2,3,2,1],[0,1,2,1,0,1]],8:[[0,1,2,1,0,1,2,1],[0,1,2,3,2,1,2,1]],
+             9:[[0,1,2,1,2,3,2,1,0],[0,1,2,3,2,1,2,1,0]],12:[[0,1,2,3,2,1,0,1,2,3,2,1],[0,1,2,1,0,1,2,1,0,1,2,1]]};
+    const A={4:[[0,2,3,2],[0,2,3,4]],6:[[0,2,3,2,1,2],[0,2,3,4,3,2]],8:[[0,2,3,2,1,2,3,2],[0,2,3,4,3,2,0,1]],
+             9:[[0,2,3,2,1,2,3,2,1],[0,2,3,1,2,3,0,2,3]],12:[[0,2,3,2,1,2,3,2,1,2,3,2],[0,2,3,4,3,2,0,2,3,4,3,2]]};
+    const T=(style==='close')?C:(style==='alt')?A:W;
+    let pats=T[eb];
+    if(!pats){ const base=(eb%6===0)?6:(eb%4===0?8:4); pats=T[base].map(p=>tile(p,eb)); }
+    return {div:1,pats};
+}
+function pianoTools(){
+    const beats=state.beats||[], bi=state.meta&&state.meta.barInfo, qOf=(state.meta&&state.meta.qOfSec)||null;
+    const beatAt=t=>{ let k=0; while(k<beats.length-2&&beats[k+1]<=t+1e-3) k++; return k; };
+    const beatLenAt=t=>{ const k=beatAt(t); return beats.length>1?Math.max(0.1,beats[k+1]-beats[k]):0.6; };
+    const tsAt=t=>{ if(!bi||!qOf) return '4/4'; const q=qOf(t); let i=bi.length-1; while(i>0&&bi[i].q>q+1e-6) i--; return bi[i].ts||'4/4'; };
+    // duração de uma colcheia (em segundos) na posição t
+    const eighthAt=t=>{ const k=beatAt(t), bl=beatLenAt(t); if(!qOf||beats.length<2) return bl/2; const qb=qOf(beats[k+1])-qOf(beats[k]); return qb>1e-6?bl*0.5/qb:bl/2; };
+    return {beatLenAt,tsAt,eighthAt};
+}
+// Ritmo harmônico do piano: acorde mais curto que meio compasso (4/4), um grupo (6/8, 12/8…) etc. não vira arpejo próprio;
+// é absorvido pelo acorde seguinte (se começa em tempo forte) ou pelo anterior. Acordes iguais seguidos viram um só.
+function arpSmooth(segs0){
+    const tl=pianoTools(), bars=state.bars||[];
+    const segs=segs0.map(g=>Object.assign({},g));
+    const geo=g=>{ const ts=tl.tsAt(g.a).split('/'), den=+ts[1]||4, eb=Math.round(8*(+ts[0])/den), s0=tl.eighthAt(g.a);
+        return {slot:s0<0.17?s0*2:s0, lmin:den===8?3:Math.max(2,Math.round(eb/2))}; };
+    const barStart=t=>{ let b=bars.length?bars[0]:0; for(const x of bars){ if(x<=t+1e-3) b=x; else break; } return b; };
+    for(let guard=0;guard<600;guard++){
+        let did=false;
+        for(let i=0;i<segs.length;i++){
+            const g=segs[i]; if(g.solo) continue;
+            const q=geo(g); if(g.b-g.a>=q.lmin*q.slot*0.9) continue;
+            const pv=segs[i-1], nx=segs[i+1];
+            const okP=pv&&!pv.solo&&Math.abs(pv.b-g.a)<0.08, okN=nx&&!nx.solo&&Math.abs(nx.a-g.b)<0.08;
+            if(!okP&&!okN) continue;
+            const off=(g.a-barStart(g.a))/q.slot, strong=Math.abs(off/q.lmin-Math.round(off/q.lmin))<0.15;
+            if(okN&&(strong||!okP)) nx.a=g.a; else pv.b=g.b;
+            segs.splice(i,1); did=true; break;
+        }
+        if(!did) break;
+    }
+    const res=[];
+    segs.forEach(g=>{ const L=res[res.length-1];
+        if(L&&!L.solo&&!g.solo&&Math.abs(L.b-g.a)<0.08&&L.r===g.r&&L.T===g.T&&L.bpc===g.bpc) L.b=g.b; else res.push(g); });
+    return res;
+}
+function buildPianoLH(segs0){
+    const segs=arpSmooth(segs0); state.arpSegs=segs;
+    const out=[], tl=pianoTools(), f=state.meta&&state.meta.fifths, style=arpStyle(), bars=state.bars||[];
+    const tonic=(typeof f==='number')?(((f*7)%12)+12)%12:0, MAJ=[0,2,4,5,7,9,11];
+    const inScale=m=>MAJ.includes((((m-tonic)%12)+12)%12);
+    // introdução em acordes de bloco (hinos de semicolcheias, sem anacruse): os 2 primeiros compassos
+    let introEnd=0;
+    if(style==='sixt'&&bars.length>=10&&!(state.meta&&state.meta.pickup)) introEnd=bars[2]-0.05;
+    // 1) nota mais grave de cada acorde (oitava mais próxima do acorde anterior) e a "escada" de notas do acorde
+    const ladder=new Map(); let prevL0=null;
+    segs.forEach(g=>{
+        if(g.solo) return;
+        const tones=[g.r%12,(g.r+g.T.iv[1])%12,(g.r+g.T.iv[2])%12];
+        if(g.bpc>=0&&tones.includes(g.bpc)){ while(tones[0]!==g.bpc) tones.push(tones.shift()); }
+        let L0=33+(((tones[0]-33)%12)+12)%12, best=null;
+        [L0,L0+12].forEach(c=>{ if(c<=47&&(best===null||Math.abs(c-(prevL0===null?41:prevL0))<Math.abs(best-(prevL0===null?41:prevL0)))) best=c; });
+        L0=best; prevL0=L0;
+        const up=(m,pc)=>{ let x=m+1; while(((x%12)+12)%12!==pc) x++; return x; };
+        const L1=up(L0,tones[1]), L2=up(L1,tones[2]);
+        ladder.set(g,[L0,L1,L2,L0+12,L1+12,L2+12]);
+    });
+    let run=0, prevG=null;
+    segs.forEach((g,gi)=>{
+        if(g.solo){
+            g.notes.forEach((n,ix)=>{ const nxn=g.notes[ix+1], m=(n.midi0!==undefined?n.midi0:n.midi), e=Math.max(n.startTime+0.05,Math.min(n.endTime-0.03,nxn?nxn.startTime-0.01:1e9)), d=e-n.startTime;
+                out.push({midi:m,startTime:n.startTime,endTime:e,duration:d,velocity:0.75,track:99,color:'#ff7043',chord:g.name}); });
+            prevG=null; return;
+        }
+        const lad=ladder.get(g), len=g.b-g.a;
+        if(g.a<introEnd){                                            // introdução: acorde de bloco
+            const e=Math.max(g.a+0.05,g.b-0.03);
+            [lad[0],lad[2],lad[3]].forEach((m,i)=>out.push({midi:m,startTime:g.a,endTime:e,duration:e-g.a,velocity:i===0?0.7:0.55,track:99,color:'#ffa500',chord:g.name}));
+            prevG=null; return;
+        }
+        const eSec=tl.eighthAt(g.a);
+        const ts=tl.tsAt(g.a).split('/'), den=+ts[1]||4, eb=Math.round(8*(+ts[0])/den);
+        const P=arpPatterns(style,eb,den,eSec);
+        let slot=eSec/P.div; if(P.div===1&&slot<0.17) slot*=2;       // andamento muito rápido: uma nota a cada duas colcheias
+        const same=prevG&&prevG.r===g.r&&prevG.T===g.T&&Math.abs(prevG.b-g.a)<0.08;
+        run=same?run+1:0; prevG=g;
+        const n=Math.max(1,Math.round(len/slot)), nb=P.pats[0].length;
+        const notes=[]; let j=0, cyc=0;
+        for(let i=0;i<n;i++){
+            if(i>0&&bars.some(x=>Math.abs(x-(g.a+i*slot))<0.4*slot)){ j=0; cyc++; }   // o desenho recomeça a cada compasso e a cada acorde novo
+            if(j>=nb){ j=0; cyc++; }
+            const pt=P.pats[(run+cyc)%P.pats.length]; let m=lad[pt[j]]; while(m>64) m-=12; notes.push({m,walk:false}); j++;
+        }
+        // nota de passagem antes de trocar de acorde
+        let nx=null; for(let k=gi+1;k<segs.length;k++){ if(Math.abs(segs[k].a-g.b)<0.08) nx=segs[k]; break; }
+        const atBar=bars.some(x=>Math.abs(x-g.b)<0.08);
+        if(nx&&!nx.solo&&n>=4&&atBar&&nx.a>=introEnd){
+            const nL0=ladder.get(nx)[0], cur=notes[n-2].m, dist=Math.abs(nL0-lad[0]);
+            if(dist>=2){
+                let w=nL0; const dir=nL0>=lad[0]?-1:1;
+                do{ w+=dir; }while(!inScale(w)&&Math.abs(w-nL0)<4);
+                if(w!==cur&&w!==lad[0]&&w>=33&&w<=64) notes[n-1]={m:w,walk:true};
+            }
+        }
+        const hold=2*P.div;                                          // a 1ª nota de cada tempo forte soa duas colcheias
+        notes.forEach((x,i)=>{
+            const t0=g.a+i*slot, last=i===n-1;
+            const e=last?g.b-0.03:Math.min(g.b-0.03,t0+slot*(x.walk?0.98:(i%(4*P.div)===0?Math.max(hold,1):0.98)));
+            const ee=Math.max(t0+0.05,e);
+            out.push({midi:x.m,startTime:t0,endTime:ee,duration:Math.max(0.05,ee-t0),velocity:i===0?0.72:(x.walk?0.6:(i%2===0?0.5:0.44)),track:99,color:x.walk?'#ffcc66':'#ffa500',chord:g.name});
+        });
+    });
+    return out;
+}
+// a nota longa (e o contralto sob ela) termina quando a subida começa; o resto da mão direita fica como no hino
+function rhTrim(list){
+    const cuts=state.rhCuts||[]; if(!cuts.length) return list;
+    return list.map(n=>{ for(const c of cuts){ if(n.startTime>=c.from&&n.startTime<c.t&&n.endTime>c.t+0.05) return Object.assign({},n,{endTime:c.t,duration:c.t-n.startTime,eq:undefined}); } return n; });
+}
+// ---- mão direita: enfeites pontuais (só onde causam impacto) ----
+// O livro tem, aqui e ali, uma subida em arpejo da mão direita sobre uma nota longa. Aqui: sobre as notas longas do soprano
+// (3 semínimas ou mais) que fecham uma frase, a mão direita sobe em arpejo do acorde na parte final da nota (semicolcheias),
+// sem tirar a melodia. Vai no máximo em 3 lugares por hino: o final (sempre) e, de quatro em quatro frases, os do meio.
+function buildPianoRH(){
+    const idx=satbIdx(); if(!idx||!state.chordSegs) return [];
+    const segs=(state.arpSegs&&state.arpSegs.length)?state.arpSegs:state.chordSegs, tl=pianoTools();
+    const sop=state.allNotes.filter(n=>n.track===idx.S).sort((a,b)=>a.startTime-b.startTime);
+    const end=state.duration||(sop.length?sop[sop.length-1].endTime:0);
+    const cand=sop.filter(n=>{ const e8=tl.eighthAt(n.startTime); return (n.endTime-n.startTime)>=5.6*e8; });
+    if(!cand.length) return [];
+    const pick=[]; cand.forEach((n,i)=>{ if(i%4===3&&pick.length<2) pick.push(n); });
+    const fin=cand[cand.length-1]; if(fin.endTime>=end-0.6&&!pick.includes(fin)) pick.push(fin);
+    const out=[]; state.rhCuts=[];
+    pick.forEach(n=>{
+        const dur=n.endTime-n.startTime, e8=tl.eighthAt(n.startTime), s16=e8/2; if(s16<0.07) return;
+        const sg=segs.find(g=>!g.solo&&n.startTime+dur*0.5>=g.a-1e-3&&n.startTime+dur*0.5<g.b); if(!sg) return;
+        const pcs=[sg.r%12,(sg.r+sg.T.iv[1])%12,(sg.r+sg.T.iv[2])%12];
+        const S=(n.midi0!==undefined?n.midi0:n.midi);
+        const isFinal=n===fin&&n.endTime>=end-0.6;
+        // notas do acorde, subindo de uma sexta abaixo da melodia até a oitava acima dela
+        let mids=[]; for(let x=S-9;x<=S+12;x++){ if(pcs.includes(((x%12)+12)%12)) mids.push(x); }
+        while(mids.length&&mids[mids.length-1]>91) mids.pop();
+        const maxN=Math.max(0,Math.floor(dur*0.42/s16));              // cabe na parte final da nota longa
+        if(mids.length>maxN) mids=mids.slice(mids.length-maxN);
+        if(mids.length<5) return;
+        const t1=n.endTime, t00=t1-mids.length*s16;      // termina exatamente no fim da nota longa (fica na grade da partitura)
+        state.rhCuts.push({from:n.startTime-0.01,t:t00});
+        mids.forEach((m,k)=>{ const st=t00+k*s16, last=k===mids.length-1, en=last?t1:st+s16*0.97;
+            out.push({midi:m,startTime:st,endTime:Math.max(st+0.05,en),duration:Math.max(0.05,en-st),velocity:Math.min(0.8,0.42+0.04*k),track:97,color:'#ffd166',chord:sg.name}); });
+    });
+    return out;
 }
 function buildChordNotes(segs,arp){
-    // Mão esquerda cabe numa oitava: nota grave (fundamental) + terça, quinta (e sétima) logo acima,
-    // tudo dentro de Dó→Dó. A oitava da fundamental é a mais próxima do acorde anterior.
-    // arp=true: em vez do acorde em bloco, toca um arpejo escolhido pelo compasso e pelo andamento:
-    //   • 2 ou 4 tempos (e 6/8, 12/8 em grupos de 3) → baixo Alberti: grave · alta · meio · alta
-    //   • 3 tempos (valsa) → dedilhado aberto: grave · quinta · terça (oitava acima), subindo e descendo
-    //   • andamento lento (tempo ≥ 1,1 s) → arpejo lento ascendente em colcheias
-    //   • andamento rápido (tempo < 0,38 s) → uma nota por tempo (colcheias seriam rápidas demais)
-    const out=[]; let prevRoot=null; const beats=state.beats||[], bars=state.bars||[], invMap=repInvMap(segs);
-    const beatLenAt=t=>{ let k=0; while(k<beats.length-2&&beats[k+1]<=t+1e-3) k++; return beats.length>1?Math.max(0.15,beats[k+1]-beats[k]):0.6; };
-    const bpbAt=t=>{ if(!bars.length||!beats.length) return 4; let bi=0; while(bi+1<bars.length&&bars[bi+1]<=t+1e-3) bi++;
-        const e=bi+1<bars.length?bars[bi+1]:Infinity; const n=beats.filter(x=>x>=bars[bi]-1e-3&&x<e-1e-3).length; return n||4; };
+    if(arp) return buildPianoLH(segs);
+    // modo "melodia + acordes": mão esquerda cabe numa oitava: nota grave (fundamental) + terça, quinta (e sétima) logo
+    // acima, tudo dentro de Dó→Dó. A oitava da fundamental é a mais próxima do acorde anterior. Acorde em bloco.
+    const out=[]; let prevRoot=null;
     segs.forEach(g=>{
         if(g.solo){
             g.notes.forEach((n,ix)=>{ const nxn=g.notes[ix+1], m=(n.midi0!==undefined?n.midi0:n.midi), e=Math.max(n.startTime+0.05,Math.min(n.endTime-0.03,nxn?nxn.startTime-0.01:1e9)), d=e-n.startTime;
@@ -1736,223 +1902,49 @@ function buildChordNotes(segs,arp){
         if(prevRoot!==null){ [root-12,root,root+12].forEach(c=>{ if(c>=38&&c<=52&&Math.abs(c-prevRoot)<Math.abs(root-prevRoot)) root=c; }); }
         prevRoot=root;
         let ivs=g.T.iv.slice(); if(g.T.sev!==undefined) ivs=[ivs[0],ivs[1],ivs[3]]; // com sétima: tônica, terça e sétima
-        let mids=ivs.map(i=>root+i);
-        const inv=arp?(invMap.get(g)||0):0;
-        for(let k=0;k<inv;k++) mids.push(mids.shift()+12);          // inversão: a nota grave sobe uma oitava
-        if(inv&&mids[0]>52) mids=mids.map(m=>m-12);
-        ivs=mids.map(m=>m-mids[0]);
+        const mids=ivs.map(i=>root+i);
         const dur=Math.max(0.05,g.b-g.a-0.03);
-        const bl=beatLenAt(g.a), len=g.b-g.a;
-        if(!arp){   // modo "melodia + acordes": acorde em bloco
-            mids.forEach((m,i)=>out.push({midi:m,startTime:g.a,endTime:g.a+dur,duration:dur,velocity:i===0?0.7:0.55,track:99,color:'#ffa500',chord:g.name}));
-            return;
-        }
-        const R=mids[0], M=mids[1], T=mids[2], M12=(R+ivs[1]+12<=64)?R+ivs[1]+12:M;
-        const bpb=bpbAt(g.a); let step, pat;
-        if(bpb>=6&&bpb%3===0){ step=bl; pat=[R,T,M12]; }       // 6/8, 9/8, 12/8: um arpejo por grupo de 3
-        else if(bl<0.38){ step=bl; pat=bpb===3?[R,T,M12]:[R,T,M,T]; }
-        else if(bl>=1.1){ step=bl/2; pat=[R,M,T,M12]; }
-        else if(bpb===3){ step=bl/2; pat=[R,T,M12,T,M12,T]; }
-        else { step=bl/2; pat=[R,T,M,T]; }                                        // Alberti
-        // o tempo de cada nota é sempre o mesmo; se o acorde dura menos que o padrão completo, toca só o começo dele
-        // (ex.: grave · quinta) e já passa para o arpejo do próximo acorde
-        const n=Math.max(1,Math.round(len/step));
-        for(let i=0;i<n;i++){
-            const t0=g.a+i*step, last=i===n-1, t1=last?g.b-0.03:t0+step*(i%pat.length===0?2:0.98);
-            const e=Math.max(t0+0.05,Math.min(t1,g.b-0.03)), d=e-t0, m=pat[i%pat.length];
-            out.push({midi:m,startTime:t0,endTime:e,duration:d,velocity:i%pat.length===0?0.7:(i%2===0?0.5:0.42),track:99,color:'#ffa500',chord:g.name});
-        }
+        mids.forEach((m,i)=>out.push({midi:m,startTime:g.a,endTime:g.a+dur,duration:dur,velocity:i===0?0.7:0.55,track:99,color:'#ffa500',chord:g.name}));
     });
     return out;
-}
-// ======================== ARPEJO AVANÇADO ========================
-// Mão esquerda: arpejo em "onda" (fundamental · quinta · oitava · décima), com PASSAGENS diatônicas que levam
-// de um acorde ao seguinte (ex.: de Sol para Mi menor passa por Fá♯) e nota de preparação antes da troca.
-// Mão direita: o soprano continua igual, mas em poucos lugares — nota longa de fim de frase seguida da próxima
-// nota —  as últimas colcheias da nota longa viram uma passagem ligando uma nota à outra.
-const ADV_MAJOR=[0,2,4,5,7,9,11];
-function advTonicPc(){
-    const f=state.meta&&state.meta.fifths;
-    if(typeof f==='number') return (((f*7)%12)+12)%12;
-    const w=new Array(12).fill(0); (state.allNotes||[]).forEach(n=>{ w[(((n.midi0!==undefined?n.midi0:n.midi)%12)+12)%12]+=n.endTime-n.startTime; });
-    let best=0,bs=-1; for(let t=0;t<12;t++){ let s=0; ADV_MAJOR.forEach(i=>{ s+=w[(t+i)%12]; }); if(s>bs){ bs=s; best=t; } }
-    return best;
-}
-function advScale(){
-    const t=advTonicPc(), sc=[];
-    for(let m=24;m<=100;m++) if(ADV_MAJOR.includes(((m-t)%12+12)%12)) sc.push(m);
-    return sc;
-}
-function advSnap(sc,m){ let bi=0,bd=1e9; sc.forEach((x,i)=>{ const d=Math.abs(x-m); if(d<bd){ bd=d; bi=i; } }); return bi; }
-function advTools(){
-    const beats=state.beats||[], bars=state.bars||[], bi=state.meta&&state.meta.barInfo, qOf=(state.meta&&state.meta.qOfSec)||null;
-    const beatLenAt=t=>{ let k=0; while(k<beats.length-2&&beats[k+1]<=t+1e-3) k++; return beats.length>1?Math.max(0.15,beats[k+1]-beats[k]):0.6; };
-    const bpbAt=t=>{ if(!bars.length||!beats.length) return 4; let b=0; while(b+1<bars.length&&bars[b+1]<=t+1e-3) b++;
-        const e=b+1<bars.length?bars[b+1]:Infinity; const n=beats.filter(x=>x>=bars[b]-1e-3&&x<e-1e-3).length; return n||4; };
-    const tsAt=t=>{ if(!bi||!qOf) return null; const q=qOf(t); let i=bi.length-1; while(i>0&&bi[i].q>q+1e-6) i--; return bi[i].ts; };
-    return {beatLenAt,bpbAt,tsAt};
-}
-function buildAdvancedAccompaniment(segs0){
-    // "respostas do baixo" (trechos copiados da partitura): mantém só 1 de cada 3; nos demais o arpejo do acorde vizinho continua
-    let soloN=0, lastCh=null; const segs=segs0.map(g=>g.solo?g:(lastCh=g,g));
-    segs0.forEach((g,i)=>{ if(g.solo&&(soloN++%3!==0)){ let c=null; for(let k=i-1;k>=0&&!c;k--) if(!segs0[k].solo) c=segs0[k]; for(let k=i+1;k<segs0.length&&!c;k++) if(!segs0[k].solo) c=segs0[k];
-        if(c) segs[i]={a:g.a,b:g.b,r:c.r,T:c.T,name:c.name}; } });
-    const out=[], SC=advScale(), tl=advTools(), COMP=['6/8','9/8','12/8'], invMap=repInvMap(segs);
-    // 1) fundamental de cada acorde (mesma escolha do arpejo normal: oitava mais próxima do acorde anterior)
-    const roots=new Map(); let prevRoot=null;
-    segs.forEach(g=>{
-        if(g.solo) return;
-        let root=40+(((g.r-40)%12)+12)%12;
-        if(prevRoot!==null){ [root-12,root,root+12].forEach(c=>{ if(c>=38&&c<=52&&Math.abs(c-prevRoot)<Math.abs(root-prevRoot)) root=c; }); }
-        prevRoot=root; roots.set(g,root);
-    });
-    const fold=m=>{ while(m>64) m-=12; return m; };
-    // melodia (soprano já com as passagens) para conferir se um acorde de passagem casa com ela
-    const sopL=state.sopAdv||(state.sopAdv=buildAdvancedSoprano());
-    const melAt=(t0,t1)=>sopL.filter(n=>n.startTime<t1-1e-3&&n.endTime>t0+1e-3).map(n=>n.midi);
-    const SCPC=new Set(SC.map(x=>x%12)); let walkN=0;
-    // Mão esquerda = arpejo puro: uma nota por vez (a raiz sustenta só enquanto toca a seguinte). Nada de acordes de 3 ou 4
-    // notas seguradas. As únicas notas dobradas são as das "respostas do baixo", copiadas da partitura: nota + a mesma uma oitava acima.
-    segs.forEach((g,gi)=>{
-        if(g.solo){
-            g.notes.forEach((n,ix)=>{ const nxn=g.notes[ix+1], m=(n.midi0!==undefined?n.midi0:n.midi), e=Math.max(n.startTime+0.05,Math.min(n.endTime-0.03,nxn?nxn.startTime-0.01:1e9)), d=e-n.startTime;
-                out.push({midi:m,startTime:n.startTime,endTime:e,duration:d,velocity:0.75,track:99,color:'#ff7043',chord:g.name});
-                out.push({midi:m+12,startTime:n.startTime,endTime:e,duration:d,velocity:0.6,track:99,color:'#ff7043',chord:g.name}); });
-            return;
-        }
-        const R=roots.get(g), iv=g.T.iv, Th=iv[1], F=iv[2], sev=g.T.sev;
-        const bl=tl.beatLenAt(g.a), len=g.b-g.a, ts=tl.tsAt(g.a), bpb=tl.bpbAt(g.a);
-        const compound=ts?COMP.includes(ts):(bpb>=6&&bpb%3===0);
-        // notas com metade do valor do arpejo comum (colcheia → semicolcheia) sempre que o andamento permitir
-        const slotOld=(bl<0.38&&!compound)?bl:bl/2;
-        const dense=(slotOld/2)>=0.13, slot=dense?slotOld/2:slotOld;
-        const perBeat=Math.round(bl/slot), dense4=dense&&perBeat>=4;
-        const n=Math.round(len/slot);
-        const mid=sev!==undefined?sev:12;
-        // trecho curto: arpejo incompleto (fundamental e quinta), nunca acorde parado
-        if(n<3){
-            const nn=Math.max(1,n), pt2=nn===1?[0]:[0,F], st2=Math.min(slot,len/nn);
-            pt2.forEach((o,i)=>{ const t0=g.a+i*st2, last=i===nn-1, e=last?g.b-0.03:t0+st2*1.1;
-                out.push({midi:fold(R+o),startTime:t0,endTime:Math.max(t0+0.05,e),duration:Math.max(0.05,Math.max(t0+0.05,e)-t0),velocity:i===0?0.72:0.5,track:99,color:'#ffa500',chord:g.name}); });
-            return;
-        }
-        // 2) sem notas de extensão (9ª, 11ª…): o arpejo usa só as notas do próprio acorde
-        const ext=null;
-        // 3) padrão do arpejo (deslocamentos em semitons a partir da fundamental). Tudo dentro de UMA oitava (0…12):
-        // a mão esquerda quase não se mexe. mid = sétima (se o acorde tem) ou a oitava.
-        let pat;
-        if(dense4){
-            const A8=[0,F,Th,F,mid,F,Th,F], B8=[0,Th,F,Th,F,mid,F,Th];
-            const A6=[0,F,Th,F,mid,F], B6=[0,Th,F,mid,F,Th];
-            if(compound||bpb===3||ts==='3/4'||ts==='3/2') pat=A6.concat(B6);
-            else if(bpb===2||ts==='2/4') pat=A8;
-            else pat=A8.concat(B8);
-        } else if(compound){
-            const A=[0,F,mid], B=[Th,F,mid];
-            const groups=Math.max(1,Math.round(n/3)); pat=[]; for(let i=0;i<groups;i++) pat=pat.concat(i%2===0?A:B);
-        } else if(bpb===3||ts==='3/4'||ts==='3/2'){ pat=[0,F,Th,F,mid,F]; }
-        else if(bpb===2||ts==='2/4'||slot===bl){ pat=[0,F,12,F]; }
-        else { pat=[0,F,Th,F,mid,F,Th,F]; }
-        // inversão quando o mesmo acorde se repete muitas vezes seguidas
-        const inv=invMap.get(g)||0; let base=R;
-        if(inv&&n>=4){ const thr=inv===1?Th:F; pat=pat.map(o=>(o<thr?o+12:o)-thr); base=R+thr; if(base>52) base-=12; }
-        const notes=[]; for(let i=0;i<n;i++) notes.push({m:fold(base+pat[i%pat.length]),walk:false,ext:!!ext});
-        // 4) passagem até o próximo acorde (só se ele vem logo em seguida e a fundamental muda)
-        let nx=null; for(let k=gi+1;k<segs.length;k++){ if(Math.abs(segs[k].a-g.b)<0.08){ nx=segs[k]; } break; }
-        const chg=!!(nx&&!nx.solo&&roots.has(nx)&&nx.r!==g.r&&n>=4), ph=chg?walkN++%3:-1;   // trocas de acorde: 1/3 passagem, 1/3 preparação com sétima, 1/3 nada
-        if(chg&&ph===1&&n>=6){
-            // preparação: arpejo do acorde de sétima dominante do próximo acorde (ex.: Ré7 antes de Sol), nas 4 últimas notas
-            const R1=roots.get(nx); let D=R1+7; if(Math.abs(R1-5-R)<Math.abs(D-R)) D=R1-5; while(D>56) D-=12; while(D<38) D+=12;
-            const tones=[D,D+4,D+7,D+10], melD=melAt(g.a+(n-4)*slot,g.b);
-            const bad=melD.some(sm=>tones.some(c=>{ const d=((sm-c)%12+12)%12; return d===1||d===11; }));
-            if(!bad&&((D%12)+12)%12!==g.r) tones.forEach((m,k)=>{ notes[n-4+k]={m:fold(m),walk:true}; });
-        }
-        if(chg&&ph===0){
-            const R1=roots.get(nx), i0=advSnap(SC,R), i1=advSnap(SC,R1), d=i1-i0, sg=Math.sign(d), ci=ix=>SC[Math.max(0,Math.min(SC.length-1,ix))];
-            let path=[];   // {m, chordy}
-            if(Math.abs(d)>=2&&dense4){
-                // passagem de cerca de um tempo: bordadura em volta da nota de saída e depois os graus até o próximo acorde
-                // (ex.: Mi → Dó: Mi Fá Mi Ré | Dó)
-                const m=Math.abs(d)-1, L=Math.min(Math.max(m,perBeat),n-3);
-                if(L>=1){
-                    const mm=Math.min(m,L), e=L-mm, op=-sg, idxs=[];
-                    for(let k=0;k<e;k++) idxs.unshift(k%2===0?i0:i0+op);
-                    for(let s=mm;s>=1;s--) idxs.push(i1-sg*s);
-                    path=idxs.map((ix,k)=>({m:ci(ix),chordy:k>=e&&k>=idxs.length-2}));
-                }
-            } else if(Math.abs(d)>=2){
-                const cnt=Math.min(Math.abs(d)-1,3,n-2);
-                for(let s=cnt;s>=1;s--) path.push({m:SC[i1-sg*s],chordy:true});
-            } else {
-                // raízes vizinhas: nota de preparação por meio-tom abaixo do próximo acorde (ou o grau acima)
-                path.push({m:Math.abs(R-R1)<=2?R1-1:ci(i1+1),chordy:true});
-            }
-            const cnt=path.length;
-            path.forEach((p,k)=>{ const si=n-cnt+k; if(si>=2) notes[si]={m:p.m,walk:true}; });
-        }
-        // 5) notas
-        notes.forEach((x,i)=>{
-            const t0=g.a+i*slot, last=i===notes.length-1;
-            const e=last?g.b-0.03:Math.min(g.b-0.03,t0+slot*(x.walk?0.98:(i%pat.length===0?2:0.98)));   // raiz sustenta 2 notas; nunca mais de 2 soando juntas
-            const ee=Math.max(t0+0.05,e);
-            out.push({midi:x.m,startTime:t0,endTime:ee,duration:Math.max(0.05,ee-t0),
-                velocity:i===0?0.72:(x.walk?0.6:(i%2===0?0.5:0.44)),track:99,color:x.walk?'#ffcc66':(x.ext?'#ffb347':'#ffa500'),chord:g.name});
-        });
-    });
-    return out;
-}
-// Soprano com poucas passagens: nota longa (≥ ~2 tempos) seguida da próxima nota, quase sem pausa
-function buildAdvancedSoprano(){
-    const idx=satbIdx(); if(!idx) return [];
-    const sop=state.allNotes.filter(n=>n.track===idx.S).sort((a,b)=>a.startTime-b.startTime).map(n=>Object.assign({},n));
-    const SC=advScale(), tl=advTools(), out=[]; let lastOrn=-1e9;
-    for(let k=0;k<sop.length;k++){
-        const n=sop[k], nx=sop[k+1], m0=(n.midi0!==undefined?n.midi0:n.midi);
-        out.push(n);
-        if(!nx||k===0) continue;
-        const bl=tl.beatLenAt(n.startTime), dur=n.endTime-n.startTime, slot=bl/2, gap=nx.startTime-n.endTime;
-        if(dur<1.9*bl-0.02||gap>0.5*bl||gap<-0.05) continue;
-        if(n.startTime-lastOrn<Math.max(8*bl,4*tl.bpbAt(n.startTime)*bl)) continue;   // no mínimo ~4 compassos entre uma passagem e outra
-        const i0=advSnap(SC,m0), mx=(nx.midi0!==undefined?nx.midi0:nx.midi), i1=advSnap(SC,mx);
-        if(SC[i0]!==m0) continue;
-        const d=i1-i0, sg=Math.sign(d), kmax=Math.floor((dur-bl)/slot+1e-6);
-        let orn=[];
-        if(Math.abs(d)>=2&&Math.abs(d)<=6){
-            const m=Math.min(Math.abs(d)-1,kmax,4); if(m<1) continue;
-            for(let s=m;s>=1;s--) orn.push(SC[i1-sg*s]);
-        } else if(Math.abs(d)<=1&&kmax>=2){
-            orn=[d===1?SC[i0-1]:SC[i0+1],m0];
-        } else continue;
-        const t0=n.endTime-orn.length*slot;
-        n.endTime=t0; n.duration=t0-n.startTime; delete n.eq;
-        orn.forEach((m,j)=>{ const s0=t0+j*slot, e0=(j===orn.length-1)?t0+orn.length*slot:s0+slot;
-            out.push({midi:m,startTime:s0,endTime:e0,duration:e0-s0,velocity:0.62,track:idx.S,color:n.color,orn:true}); });
-        lastOrn=n.startTime;
-    }
-    return out.sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
 }
 function setArrangement(k){
     const idx=satbIdx(); if(!idx) return;
     if(k==='four'){ setVoiceSel(state.voiceList.map(v=>v.track)); setInstrument('organ'); return; }
-    if(proLocked(k)){ openProModal(k==='arp2'?'O arpejo avançado é um recurso Pro.':'Este modo de acompanhamento é um recurso Pro.'); return; }
+    if(proLocked(k)){ openProModal('Este modo de acompanhamento é um recurso Pro.'); return; }
     if(!state.chordSegs) state.chordSegs=analyzeChords();
     if(!state.chordNotesBy) state.chordNotesBy={};
-    if(!state.chordNotesBy[k]&&state.chordSegs) state.chordNotesBy[k]=(k==='arp2')?buildAdvancedAccompaniment(state.chordSegs):buildChordNotes(state.chordSegs,k==='arp');
+    if(!state.chordNotesBy[k]&&state.chordSegs) state.chordNotesBy[k]=buildChordNotes(state.chordSegs,k==='arp');
     state.chordNotes=state.chordNotesBy[k];
     if(!state.chordNotes||!state.chordNotes.length){ toast('Não foi possível calcular os acordes deste arquivo'); return; }
-    state.arr=k; state.voiceSel=new Set([idx.S]); applyHandVoicing();
-    const sopN=(k==='arp2')?(state.sopAdv||(state.sopAdv=buildAdvancedSoprano())):state.allNotes.filter(n=>n.track===idx.S);
-    state.notes=sopN.concat(state.chordNotes).sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
-    state.totalNotes=state.notes.length; noteCountBadge.textContent=state.totalNotes+' notas';
+    state.arr=k; state.voiceSel=new Set(k==='arp'?[idx.S,idx.A]:[idx.S]); applyHandVoicing();
+    const sopN=state.allNotes.filter(n=>n.track===idx.S||(k==='arp'&&n.track===idx.A));
+    if(k==='arp'&&!state.rhFills) state.rhFills=buildPianoRH();
+    state.rhNotes=(k==='arp'?rhTrim(sopN):sopN).concat(k==='arp'?(state.rhFills||[]):[]);
+    applyHandFilter();
     fitKeyRange();
     refreshVoiceBar(); setInstrument('piano');
     if(state.isPlaying){ const cp=state.currentTime; pausePlayback(); state.pausedAt=cp; startPlayback(); }
     else { drawScene(); }
 }
+// ---- qual mão toca (e aparece): ambas, só a esquerda ou só a direita ----
+function applyHandFilter(){
+    const h=state.hand||'both', R=state.rhNotes||[], L=state.chordNotes||[];
+    state.notes=(h==='L'?L:h==='R'?R:R.concat(L)).slice().sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
+    state.totalNotes=state.notes.length; noteCountBadge.textContent=state.totalNotes+' notas';
+}
+function setHand(h){
+    state.hand=h; refreshVoiceBar();
+    if(!isAcc()) return;
+    applyHandFilter(); fitKeyRange();
+    if(state.isPlaying){ const cp=state.currentTime; pausePlayback(); state.pausedAt=cp; startPlayback(); }
+    else { drawScene(); }
+}
 function updateChordBadge(){
-    const cb=document.getElementById('chordBadge'); if(!cb||cb.hidden||!state.chordSegs) return;
+    const SG=(state.arr==='arp'&&state.arpSegs)||state.chordSegs;
+    const cb=document.getElementById('chordBadge'); if(!cb||cb.hidden||!SG) return;
     const t=state.currentTime; let nm='–';
-    for(const g of state.chordSegs){ if(t>=g.a-1e-3&&t<g.b){ nm=g.name; break; } if(g.a>t) break; }
+    for(const g of SG){ if(t>=g.a-1e-3&&t<g.b){ nm=g.name; break; } if(g.a>t) break; }
     if(cb.textContent!==nm) cb.textContent=nm;
 }
 function toggleVoice(t){
@@ -1973,7 +1965,7 @@ function setVoiceSel(list){
     if(state.isPlaying){ const cp=state.currentTime; pausePlayback(); state.pausedAt=cp; startPlayback(); }
     else { drawScene(); }
 }
-function isAcc(){ return state.arr==='chords'||state.arr==='arp'||state.arr==='arp2'; }
+function isAcc(){ return state.arr==='chords'||state.arr==='arp'; }
 function refreshVoiceBar(){
     const all=state.voiceList.length, allOn=state.voiceSel.size===all&&!isAcc();
     document.querySelectorAll('#voiceChips .voice-chip').forEach(b=>{
@@ -1986,11 +1978,13 @@ function refreshVoiceBar(){
         else { const t=+[...b.classList].find(c=>/^v\d+$/.test(c)).slice(1); b.classList.toggle('on',!allOn&&!isAcc()&&state.voiceSel.has(t)); }
     });
     document.querySelectorAll('#arrChips .voice-chip').forEach(b=>{
+        if(b.dataset.hand){ b.classList.toggle('on',(state.hand||'both')===b.dataset.hand); b.hidden=!isAcc(); return; }
         const k=b.dataset.arr, lock=proLocked(k);
         b.classList.toggle('on',state.arr===k);
         const tn=b.lastChild; if(tn&&tn.nodeType===3){ const base=tn.nodeValue.replace(/ 🔒$/,''); tn.nodeValue=base+(lock?' 🔒':''); }
         b.classList.toggle('locked',lock);
     });
+    const hl=document.querySelector('#arrChips .hand-lbl'); if(hl) hl.hidden=!isAcc();
     const cb=document.getElementById('chordBadge'); if(cb){ cb.hidden=!isAcc(); updateChordBadge(); }
 }
 
@@ -4644,13 +4638,15 @@ function pdfAccompaniment(mode,meta,pref){
     if(!state.chordSegs) state.chordSegs=analyzeChords();
     if(!state.chordNotesBy) state.chordNotesBy={};
     const key=mode;
-    if(!state.chordNotesBy[key]&&state.chordSegs) state.chordNotesBy[key]=(mode==='arp2')?buildAdvancedAccompaniment(state.chordSegs):buildChordNotes(state.chordSegs,mode==='arp');
+    if(!state.chordNotesBy[key]&&state.chordSegs) state.chordNotesBy[key]=buildChordNotes(state.chordSegs,mode==='arp');
     const cn=(state.chordNotesBy[key]||[]).slice().sort((a,b)=>a.startTime-b.startTime||a.midi-b.midi);
     if(!cn.length) throw new Error('sem acordes');
     const ons=[...new Set(cn.map(n=>Math.round(n.startTime*1000)))].sort((a,b)=>a-b);
     const notes=[];
-    const sopN=(mode==='arp2')?(state.sopAdv||(state.sopAdv=buildAdvancedSoprano())):state.allNotes.filter(n=>n.track===idx.S);
-    sopN.forEach(n=>notes.push(pdfNote(n,'R',meta,pref)));
+    const sopN=state.allNotes.filter(n=>n.track===idx.S||(mode==='arp'&&n.track===idx.A));
+    if(mode==='arp'&&!state.rhFills) state.rhFills=buildPianoRH();
+    (mode==='arp'?rhTrim(sopN):sopN).forEach(n=>notes.push(pdfNote(n,'R',meta,pref)));
+    if(mode==='arp') state.rhFills.forEach(n=>notes.push(pdfNote(n,'R',meta,pref)));
     cn.forEach(n=>{
         const st=Math.round(n.startTime*1000), nx=ons.find(t=>t>st);
         let end=n.endTime+0.03; if(nx!==undefined) end=Math.min(end,nx/1000);
@@ -4658,7 +4654,7 @@ function pdfAccompaniment(mode,meta,pref){
         notes.push(pdfNote(n,'L',meta,pref,end));
     });
     const labels=new Map(); let prev='';
-    (state.chordSegs||[]).filter(g=>!g.solo&&g.name).sort((a,b)=>a.a-b.a).forEach(g=>{
+    ((mode==='arp'&&state.arpSegs)||state.chordSegs||[]).filter(g=>!g.solo&&g.name).sort((a,b)=>a.a-b.a).forEach(g=>{
         if(g.name===prev) return; prev=g.name;
         const q=meta.qOf(g.a); labels.set(Math.max(0,Math.round(((1+q)-1)*8)),pdfChordLabel(g.name,meta.fifths));
     });
@@ -4700,7 +4696,6 @@ function openPdfModal(){
     if(satbIdx()&&state.beats&&state.beats.length>2){
         mk('pdfChords','🎶 Melodia + acordes'+(proLocked('chords')?' 🔒':''),'Soprano na mão direita e acordes na mão esquerda, com o nome do acorde acima da pauta.',false);
         mk('pdfArp','🎼 Melodia + arpejo'+(proLocked('arp')?' 🔒':''),'Soprano na mão direita e arpejo na mão esquerda, com o nome do acorde acima da pauta.',false);
-        mk('pdfArp2','✨ Melodia + arpejo avançado'+(proLocked('arp2')?' 🔒':''),'Arpejo largo com passagens ligando um acorde ao outro; no soprano, passagens em alguns fins de frase.',false);
     }
     mk('pdfScore','📄 Partitura das vozes','Escolha abaixo quais vozes entram na partitura.',true);
     const vb=document.createElement('div'); vb.className='pdf-voices'; vb.id='pdfVoices';
@@ -4718,13 +4713,12 @@ async function pdfGenerate(){
     const msg=document.getElementById('pdfMsg'), btn=document.getElementById('pdfGo');
     const on=id=>{ const e=document.getElementById(id); return !!(e&&e.checked); };
     const tracks=[...document.querySelectorAll('#pdfVoices input:checked')].map(i=>+i.value);
-    for(const k of [['pdfChords','chords'],['pdfArp','arp'],['pdfArp2','arp2']]){
-        if(on(k[0])&&proLocked(k[1])){ hideModal('mPdf'); openProModal('O PDF com '+(k[1]==='arp2'?'arpejo avançado':k[1]==='arp'?'arpejo':'acordes')+' é um recurso Pro.'); return; }
+    for(const k of [['pdfChords','chords'],['pdfArp','arp']]){
+        if(on(k[0])&&proLocked(k[1])){ hideModal('mPdf'); openProModal('O PDF com '+(k[1]==='arp'?'arpejo':'acordes')+' é um recurso Pro.'); return; }
     }
     const want=[];
     if(on('pdfChords')) want.push('chords');
     if(on('pdfArp')) want.push('arp');
-    if(on('pdfArp2')) want.push('arp2');
     if(on('pdfScore')){ if(!tracks.length){ msg.style.color='#ff6b6b'; msg.textContent='Marque pelo menos uma voz para a partitura.'; return; } want.push('score'); }
     if(!want.length){ msg.style.color='#ff6b6b'; msg.textContent='Escolha pelo menos uma versão.'; return; }
     btn.disabled=true; msg.style.color=''; msg.textContent='Montando o PDF…';
@@ -4738,7 +4732,7 @@ async function pdfGenerate(){
                 sub='Partitura — '+state.voiceList.filter(v=>tracks.includes(v.track)).map(v=>v.name).join(', ');
             } else {
                 part=pdfAccompaniment(w,meta,pref);
-                sub=w==='arp2'?'Melodia + arpejo avançado':w==='arp'?'Melodia + arpejo':'Melodia + acordes';
+                sub=w==='arp'?'Melodia + arpejo':'Melodia + acordes';
             }
             msg.textContent='Desenhando: '+sub+'…';
             await new Promise(r=>setTimeout(r,30));
@@ -4747,7 +4741,7 @@ async function pdfGenerate(){
             for(const svg of sc.svgs) pages.push(await PB.svgToJpeg(svg,sc.W,sc.H,2.6));
         }
         const base=title.replace(/[\\/:*?"<>|]+/g,'').trim()||'partitura';
-        const suf=want.length===1?({chords:' - acordes',arp:' - arpejo',arp2:' - arpejo avancado',score:' - partitura'})[want[0]]:'';
+        const suf=want.length===1?({chords:' - acordes',arp:' - arpejo',score:' - partitura'})[want[0]]:'';
         await tbSaveFile(base+suf+'.pdf',PB.makePdf(pages));
         hideModal('mPdf'); toast('PDF gerado ('+pages.length+' página'+(pages.length>1?'s':'')+')','success');
     }catch(e){
